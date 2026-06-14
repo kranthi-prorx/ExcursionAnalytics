@@ -275,7 +275,7 @@ export default function ForgotPasswordModal({ onClose }: Props) {
             We sent a 6-digit code to <span className="text-white font-medium">{email}</span>.<br />
             Check your inbox (and spam folder).
           </p>
-          {!process.env.NODE_ENV || process.env.NODE_ENV !== 'production' && (
+          {!import.meta.env.PROD && (
             <p className="mt-2 text-[11px] text-brand-400">
               💡 SMTP not configured? Check the server console for your OTP.
             </p>
