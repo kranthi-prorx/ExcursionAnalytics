@@ -1,0 +1,162 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    @apply bg-surface-50 text-surface-900 font-sans antialiased;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+  .dark body, body.dark {
+    @apply bg-surface-950 text-surface-100;
+  }
+}
+
+@layer components {
+  /* Cards */
+  .card {
+    @apply bg-white dark:bg-surface-800 rounded-2xl shadow-card dark:shadow-card-dark border border-surface-100 dark:border-surface-700;
+  }
+  .card-glass {
+    @apply backdrop-blur-md bg-white/70 dark:bg-surface-800/70 rounded-2xl shadow-glass border border-white/30 dark:border-surface-700/30;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-xl font-medium text-sm transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 text-white hover:bg-brand-700 focus:ring-brand-500 shadow-sm hover:shadow-md active:scale-95;
+  }
+  .btn-secondary {
+    @apply btn bg-surface-100 dark:bg-surface-700 text-surface-700 dark:text-surface-200 hover:bg-surface-200 dark:hover:bg-surface-600 focus:ring-surface-400;
+  }
+  .btn-danger {
+    @apply btn bg-danger text-white hover:bg-red-600 focus:ring-red-500;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-700;
+  }
+  .btn-success {
+    @apply btn bg-success text-white hover:bg-emerald-600 focus:ring-emerald-500;
+  }
+  .btn-warning {
+    @apply btn bg-warning text-white hover:bg-amber-600 focus:ring-amber-500;
+  }
+  .btn-sm { @apply px-3 py-1.5 text-xs; }
+  .btn-lg { @apply px-6 py-3 text-base; }
+
+  /* Inputs */
+  .input {
+    @apply w-full px-3.5 py-2.5 rounded-xl border border-surface-200 dark:border-surface-600
+           bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100
+           placeholder-surface-400 dark:placeholder-surface-500
+           focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent
+           transition-all duration-200 text-sm;
+  }
+  .input-error { @apply border-danger focus:ring-danger; }
+  .label { @apply block text-xs font-semibold text-surface-600 dark:text-surface-400 mb-1.5 uppercase tracking-wide; }
+
+  /* Select */
+  .select {
+    @apply input appearance-none cursor-pointer bg-no-repeat;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E");
+    background-position: right 0.75rem center;
+    background-size: 1.2em;
+    padding-right: 2.5rem;
+  }
+
+  /* Badges */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold;
+  }
+  .badge-iso5  { @apply badge bg-cyan-100  text-cyan-800  dark:bg-cyan-900/40  dark:text-cyan-300;  }
+  .badge-iso7  { @apply badge bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300; }
+  .badge-admin { @apply badge bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300; }
+  .badge-manager { @apply badge bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300; }
+  .badge-user  { @apply badge bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300; }
+  .badge-hit   { @apply badge bg-red-100   text-red-800   dark:bg-red-900/40   dark:text-red-300;   }
+  .badge-no-hit { @apply badge bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300; }
+
+  /* KPI Card */
+  .kpi-card {
+    @apply card p-5 flex flex-col gap-2 hover:shadow-lg dark:hover:shadow-brand-900/20 transition-all duration-300 cursor-pointer;
+  }
+  .kpi-value { @apply text-3xl font-bold tracking-tight; }
+  .kpi-label { @apply text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-widest; }
+
+  /* Sidebar */
+  .sidebar-link {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
+           text-surface-600 dark:text-surface-400 hover:bg-brand-50 dark:hover:bg-brand-900/20 hover:text-brand-700 dark:hover:text-brand-300;
+  }
+  .sidebar-link.active {
+    @apply bg-brand-50 dark:bg-brand-900/30 text-brand-700 dark:text-brand-300;
+  }
+
+  /* Table */
+  .table-base { @apply w-full text-sm; }
+  .table-base th {
+    @apply text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider
+           border-b border-surface-100 dark:border-surface-700 bg-surface-50 dark:bg-surface-900 sticky top-0;
+  }
+  .table-base td {
+    @apply px-4 py-3 text-surface-700 dark:text-surface-300 border-b border-surface-50 dark:border-surface-800/50;
+  }
+  .table-base tr:hover td { @apply bg-surface-50/50 dark:bg-surface-700/20; }
+
+  /* Scrollbar */
+  .scrollbar-thin::-webkit-scrollbar { width: 4px; height: 4px; }
+  .scrollbar-thin::-webkit-scrollbar-track { @apply bg-transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { @apply bg-surface-300 dark:bg-surface-600 rounded-full; }
+
+  /* Drawer overlay */
+  .drawer-overlay {
+    @apply fixed inset-0 bg-surface-900/50 backdrop-blur-sm z-40;
+  }
+  .drawer {
+    @apply fixed right-0 top-0 h-full w-full sm:w-[480px] bg-white dark:bg-surface-900
+           shadow-2xl z-50 flex flex-col animate-slide-in-right;
+  }
+  @media (max-width: 640px) {
+    .drawer {
+      @apply w-full bottom-0 top-auto h-[90vh] rounded-t-3xl animate-slide-in-up;
+    }
+  }
+
+  /* Chart container */
+  .chart-container {
+    @apply card p-5 flex flex-col gap-4 hover:shadow-lg transition-shadow duration-300;
+  }
+  .chart-title {
+    @apply text-base font-semibold text-surface-700 dark:text-surface-200;
+  }
+
+  /* Hit location grid */
+  .location-cell {
+    @apply p-2 rounded-lg text-center text-xs font-semibold border;
+  }
+  .location-hit    { @apply location-cell bg-red-50   dark:bg-red-900/20   border-red-200   dark:border-red-800   text-red-700   dark:text-red-400; }
+  .location-no-hit { @apply location-cell bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400; }
+
+  /* Stepper form */
+  .step-indicator {
+    @apply w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300;
+  }
+  .step-active    { @apply step-indicator bg-brand-600 text-white shadow-lg shadow-brand-500/30; }
+  .step-complete  { @apply step-indicator bg-success text-white; }
+  .step-inactive  { @apply step-indicator bg-surface-200 dark:bg-surface-700 text-surface-500 dark:text-surface-400; }
+}
+
+/* Recharts custom styles */
+.recharts-tooltip-wrapper { @apply !outline-none; }
+.recharts-default-tooltip {
+  @apply rounded-xl border-0 !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15) !important;
+}
+.dark .recharts-cartesian-grid line { stroke: #334155 !important; }
+.dark .recharts-text { fill: #94a3b8 !important; }

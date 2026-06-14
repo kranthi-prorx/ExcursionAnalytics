@@ -1,0 +1,84 @@
+# ============================================================
+#  Excursion Analytics — Local Supabase Stack
+#  Run: docker compose up -d
+#  Stop: docker compose down
+#  Wipe data: docker compose down -v
+# ============================================================
+
+version: "3.8"
+
+services:
+
+  # ── 1. PostgreSQL (the actual database) ─────────────────────
+  db:
+    image: supabase/postgres:15.1.0.117
+    container_name: eha_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"          # Connect from your backend or any PG client
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - db_data:/var/lib/postgresql/data          # Persist data between restarts
+      - ./supabase/migrations:/docker-entrypoint-initdb.d  # Auto-run SQL on first boot
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 2. Supabase Studio (visual DB browser at localhost:3000) ─
+  studio:
+    image: supabase/studio:20240101-8e4a94c
+    container_name: eha_studio
+    restart: unless-stopped
+    ports:
+      - "3000:3000"          # Open http://localhost:3000 to browse your DB
+    environment:
+      STUDIO_PG_META_URL: http://meta:8080
+      SUPABASE_URL: http://localhost:8000
+      SUPABASE_REST_URL: http://rest:3000/
+      SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlhdCI6MTY0MTc2OTIwMCwiZXhwIjoxNzU3NTI1MjAwfQ.pa8bMhpOJXm5t4oRz5hKexKnr8s4Yl0KmWR7SnAGmdk
+      SUPABASE_SERVICE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaWF0IjoxNjQxNzY5MjAwLCJleHAiOjE3NTc1MjUyMDB9.AKiT_JoNQrBTt2BaFKNR1b-hG4r7fJi89UFnnJ1L7Pk
+    depends_on:
+      - meta
+
+  # ── 3. PostgREST (auto-generates a REST API from your tables) ─
+  rest:
+    image: postgrest/postgrest:v12.0.2
+    container_name: eha_rest
+    restart: unless-stopped
+    ports:
+      - "3100:3000"          # PostgREST auto-API (optional, you already have Express)
+    environment:
+      PGRST_DB_URI: postgres://postgres:postgres@db:5432/postgres
+      PGRST_DB_SCHEMA: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── 4. pg-meta (used by Studio to introspect schema) ────────
+  meta:
+    image: supabase/postgres-meta:v0.80.0
+    container_name: eha_meta
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: db
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: postgres
+      PG_META_DB_USER: postgres
+      PG_META_DB_PASSWORD: postgres
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:    # Named volume — your data survives container restarts
