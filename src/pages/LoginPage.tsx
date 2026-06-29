@@ -168,17 +168,7 @@ export default function LoginPage() {
               </p>
             </div>
 
-            {/* Demo credentials — remove before production */}
-            <div className="mb-5 p-3 rounded-xl bg-brand-500/10 border border-brand-500/20 text-xs">
-              <p className="font-semibold text-brand-400 mb-2 flex items-center gap-1">
-                🔑 Demo Accounts <span className="text-surface-500 font-normal">(temp — remove before launch)</span>
-              </p>
-              <div className="space-y-1 font-mono text-surface-300">
-                <p><span className="text-brand-400">Admin:</span> admin@prorxpharma.com / Admin@ProRx2026!</p>
-                <p><span className="text-emerald-400">Manager:</span> manager@prorxpharma.com / Manager@ProRx2026!</p>
-                <p><span className="text-surface-400">User:</span> user@prorxpharma.com / User@ProRx2026!</p>
-              </div>
-            </div>
+
 
             {/* API / domain error banner */}
             {apiError && (

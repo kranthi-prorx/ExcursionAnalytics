@@ -65,29 +65,15 @@ async function seed() {
     await client.query('BEGIN');
 
     // ── Ensure all demo users exist ───────────────────────────────────────────
-    const adminHash   = await bcrypt.hash('Admin@ProRx2026!',   10);
-    const managerHash = await bcrypt.hash('Manager@ProRx2026!', 10);
-    const userHash    = await bcrypt.hash('User@ProRx2026!',    10);
+    const adminHash   = await bcrypt.hash('WsxIjn@123', 10);
 
     const adminRes = await client.query(`
       INSERT INTO users (name, email, password_hash, role)
-      VALUES ('Administrator', 'admin@prorxpharma.com', $1, 'admin')
+      VALUES ('Shiva', 'shiva@prorxpharma.com', $1, 'admin')
       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash
       RETURNING id
     `, [adminHash]);
     const adminId = adminRes.rows[0].id;
-
-    await client.query(`
-      INSERT INTO users (name, email, password_hash, role)
-      VALUES ('Jane Manager', 'manager@prorxpharma.com', $1, 'manager')
-      ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash
-    `, [managerHash]);
-
-    await client.query(`
-      INSERT INTO users (name, email, password_hash, role)
-      VALUES ('John User', 'user@prorxpharma.com', $1, 'user')
-      ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash
-    `, [userHash]);
 
     // ── Build 80 demo records spread over the last 60 days ───────────────────
     let recordsInserted = 0;
@@ -163,9 +149,7 @@ async function seed() {
     console.log(`   Hit details rows : ${detailsInserted}`);
     console.log('');
     console.log('   Demo credentials:');
-    console.log('   Admin:   admin@prorxpharma.com   / Admin@ProRx2026!');
-    console.log('   Manager: manager@prorxpharma.com / Manager@ProRx2026!');
-    console.log('   User:    user@prorxpharma.com    / User@ProRx2026!');
+    console.log('   Admin:   shiva@prorxpharma.com   / WsxIjn@123');
     console.log('');
     console.log('   To remove ALL demo records later:');
     console.log("   DELETE FROM records WHERE lot_number LIKE 'DEMO-%';");

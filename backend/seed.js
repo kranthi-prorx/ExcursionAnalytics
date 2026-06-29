@@ -28,28 +28,14 @@ async function seed() {
     await client.query('BEGIN');
 
     // ─── Users ───────────────────────────────────────────────────────────────
-    const adminHash   = await bcrypt.hash('Admin@ProRx2026!',   10);
-    const managerHash = await bcrypt.hash('Manager@ProRx2026!', 10);
-    const userHash    = await bcrypt.hash('User@ProRx2026!',    10);
+    const adminHash   = await bcrypt.hash('WsxIjn@123', 10);
 
     const adminRes = await client.query(`
       INSERT INTO users (name, email, password_hash, role)
-      VALUES ('Administrator', 'admin@prorxpharma.com', $1, 'admin')
+      VALUES ('Shiva', 'shiva@prorxpharma.com', $1, 'admin')
       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash
       RETURNING id
     `, [adminHash]);
-
-    await client.query(`
-      INSERT INTO users (name, email, password_hash, role)
-      VALUES ('Jane Manager', 'manager@prorxpharma.com', $1, 'manager')
-      ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash
-    `, [managerHash]);
-
-    await client.query(`
-      INSERT INTO users (name, email, password_hash, role)
-      VALUES ('John User', 'user@prorxpharma.com', $1, 'user')
-      ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash
-    `, [userHash]);
 
     const adminId = adminRes.rows[0].id;
 
@@ -86,9 +72,7 @@ async function seed() {
 
     await client.query('COMMIT');
     console.log('✅ Seed completed successfully!');
-    console.log('   Admin:   admin@prorxpharma.com   / Admin@ProRx2026!');
-    console.log('   Manager: manager@prorxpharma.com / Manager@ProRx2026!');
-    console.log('   User:    user@prorxpharma.com    / User@ProRx2026!');
+    console.log('   Admin:   shiva@prorxpharma.com   / WsxIjn@123');
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('❌ Seed failed:', err.message);

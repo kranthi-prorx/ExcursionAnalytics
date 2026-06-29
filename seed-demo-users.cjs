@@ -11,9 +11,7 @@ const BASE = 'localhost';
 const PORT = 3001;
 
 const DEMO_USERS = [
-  { name: 'Admin Demo',   email: 'admin@prorxpharma.com',   password: 'Admin@ProRx2026!',   role: 'admin'   },
-  { name: 'Manager Demo', email: 'manager@prorxpharma.com', password: 'Manager@ProRx2026!', role: 'manager' },
-  { name: 'User Demo',    email: 'user@prorxpharma.com',    password: 'User@ProRx2026!',    role: 'user'    },
+  { name: 'Shiva', email: 'shiva@prorxpharma.com', password: 'WsxIjn@123', role: 'admin' },
 ];
 
 function post(path, body) {
