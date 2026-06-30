@@ -6,7 +6,7 @@ import type { User, Role } from '../types';
 import { ROLES } from '../types';
 import { usersAPI, authAPI } from '../lib/api';
 import { roleBadgeClass, clsx, formatDate } from '../lib/utils';
-import { UserPlus, Trash2, Edit2, Key, X, Check, Shield, Users } from 'lucide-react';
+import { UserPlus, Trash2, Edit2, Key, X, Check, Shield, Users, Pencil } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -20,6 +20,13 @@ type CreateForm = z.infer<typeof createSchema>;
 
 const pwSchema = z.object({ password: z.string().min(6, 'Min 6 characters') });
 type PwForm = z.infer<typeof pwSchema>;
+
+const editSchema = z.object({
+  name:  z.string().min(2, 'Name must be at least 2 characters'),
+  email: z.string().email('Invalid email'),
+  role:  z.string() as z.ZodType<Role>,
+});
+type EditForm = z.infer<typeof editSchema>;
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
@@ -54,20 +61,20 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
 
   return (
     <Modal title="Create New User" onClose={onClose}>
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" autoComplete="off">
         <div>
           <label className="label">Full Name</label>
-          <input {...register('name')} className={`input ${errors.name ? 'input-error' : ''}`} placeholder="Jane Doe" />
+          <input {...register('name')} autoComplete="off" className={`input ${errors.name ? 'input-error' : ''}`} placeholder="Jane Doe" />
           {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name.message}</p>}
         </div>
         <div>
           <label className="label">Email</label>
-          <input {...register('email')} type="email" className={`input ${errors.email ? 'input-error' : ''}`} placeholder="jane@company.com" />
+          <input {...register('email')} type="email" autoComplete="off" className={`input ${errors.email ? 'input-error' : ''}`} placeholder="jane@company.com" />
           {errors.email && <p className="text-xs text-red-500 mt-1">{errors.email.message}</p>}
         </div>
         <div>
           <label className="label">Password</label>
-          <input {...register('password')} type="password" className={`input ${errors.password ? 'input-error' : ''}`} placeholder="••••••••" />
+          <input {...register('password')} type="password" autoComplete="new-password" className={`input ${errors.password ? 'input-error' : ''}`} placeholder="••••••••" />
           {errors.password && <p className="text-xs text-red-500 mt-1">{errors.password.message}</p>}
         </div>
         <div>
@@ -80,6 +87,55 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
           <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
           <button type="submit" disabled={isSubmitting} className="btn-primary flex-1">
             {isSubmitting ? 'Creating…' : 'Create User'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function EditUserModal({ user, currentUserId, onClose, onUpdated }: { user: User; currentUserId?: string; onClose: () => void; onUpdated: (u: User) => void }) {
+  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<EditForm>({
+    resolver: zodResolver(editSchema),
+    defaultValues: { name: user.name, email: user.email, role: user.role },
+  });
+
+  const onSubmit = async (data: EditForm) => {
+    try {
+      const res = await usersAPI.update(user.id, data);
+      onUpdated(res.data);
+      toast.success('User updated successfully!');
+      onClose();
+    } catch (err: any) {
+      const msg = err?.response?.data?.message ?? 'Failed to update user';
+      toast.error(msg);
+    }
+  };
+
+  return (
+    <Modal title={`Edit User — ${user.name}`} onClose={onClose}>
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        <div>
+          <label className="label">Full Name</label>
+          <input {...register('name')} className={`input ${errors.name ? 'input-error' : ''}`} />
+          {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name.message}</p>}
+        </div>
+        <div>
+          <label className="label">Email</label>
+          <input {...register('email')} type="email" className={`input ${errors.email ? 'input-error' : ''}`} />
+          {errors.email && <p className="text-xs text-red-500 mt-1">{errors.email.message}</p>}
+        </div>
+        <div>
+          <label className="label">Role</label>
+          <select {...register('role')} className="select" disabled={user.id === currentUserId}>
+            {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+          {user.id === currentUserId && <p className="text-xs text-surface-400 mt-1">You cannot change your own role</p>}
+        </div>
+        <div className="flex gap-2 pt-2">
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+          <button type="submit" disabled={isSubmitting} className="btn-primary flex-1">
+            {isSubmitting ? 'Saving…' : 'Save Changes'}
           </button>
         </div>
       </form>
@@ -126,7 +182,9 @@ export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
+  const [createKey, setCreateKey]   = useState(0);
   const [resetTarget, setResetTarget] = useState<User | null>(null);
+  const [editTarget, setEditTarget]   = useState<User | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editRole, setEditRole]   = useState<Role>('user');
 
@@ -182,7 +240,7 @@ export default function UsersPage() {
           <h1 className="text-2xl font-bold text-surface-900 dark:text-white">User Management</h1>
           <p className="text-sm text-surface-500 dark:text-surface-400 mt-0.5">{users.length} registered users</p>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary">
+        <button onClick={() => { setCreateKey(k => k + 1); setShowCreate(true); }} className="btn-primary">
           <UserPlus size={16} /> New User
         </button>
       </div>
@@ -258,8 +316,11 @@ export default function UsersPage() {
                   <td className="text-xs text-surface-500">{formatDate(u.created_at)}</td>
                   <td>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => startEditRole(u)} className="btn-ghost p-1.5" title="Edit role">
-                        <Edit2 size={13} />
+                      <button onClick={() => setEditTarget(u)} className="btn-ghost p-1.5 text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-900/20" title="Edit user">
+                        <Pencil size={13} />
+                      </button>
+                      <button onClick={() => startEditRole(u)} className="btn-ghost p-1.5" title="Change role">
+                        <Shield size={13} />
                       </button>
                       <button onClick={() => setResetTarget(u)} className="btn-ghost p-1.5 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20" title="Reset password">
                         <Key size={13} />
@@ -277,10 +338,18 @@ export default function UsersPage() {
       </div>
 
       {showCreate && (
-        <CreateUserModal onClose={() => setShowCreate(false)} onCreated={u => setUsers(us => [...us, u])} />
+        <CreateUserModal key={createKey} onClose={() => setShowCreate(false)} onCreated={u => setUsers(us => [...us, u])} />
       )}
       {resetTarget && (
         <ResetPasswordModal user={resetTarget} onClose={() => setResetTarget(null)} />
+      )}
+      {editTarget && (
+        <EditUserModal
+          user={editTarget}
+          currentUserId={currentUser?.id}
+          onClose={() => setEditTarget(null)}
+          onUpdated={(updated) => setUsers(us => us.map(x => x.id === updated.id ? updated : x))}
+        />
       )}
     </div>
   );

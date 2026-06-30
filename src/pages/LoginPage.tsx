@@ -178,7 +178,7 @@ export default function LoginPage() {
               </div>
             )}
 
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate>
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate autoComplete="off">
 
               {/* Email */}
               <div>
@@ -189,7 +189,7 @@ export default function LoginPage() {
                   <input
                     id="email"
                     type="email"
-                    autoComplete="email"
+                    autoComplete="off"
                     placeholder={`you@${ALLOWED_DOMAIN}`}
                     {...register('email')}
                     className={`
@@ -262,7 +262,7 @@ export default function LoginPage() {
                   <input
                     id="password"
                     type={showPw ? 'text' : 'password'}
-                    autoComplete="current-password"
+                    autoComplete="new-password"
                     placeholder="••••••••"
                     {...register('password')}
                     className={`
