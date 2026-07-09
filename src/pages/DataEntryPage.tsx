@@ -27,7 +27,6 @@ const hitDetailSchema = z.object({
 const recordSchema = z.object({
   name:           z.string().min(1, 'Name is required'),
   lot_number:     z.string().min(1, 'Lot number is required'),
-  job_function:   z.string().min(1, 'Job function is required'),
   personnel_type: z.string().min(1) as z.ZodType<PersonnelType>,
   iso_class:      z.string(),   // derived, not user-entered
   alert_level:    z.coerce.number().int().min(0),
@@ -123,13 +122,13 @@ export default function DataEntryPage() {
     watch,
     setValue,
     reset,
+    trigger,
     formState: { errors },
   } = useForm<FormData>({
     resolver: zodResolver(recordSchema),
     defaultValues: {
       name:           '',
       lot_number:     '',
-      job_function:   '',
       personnel_type: 'Filling',
       iso_class:      'ISO 7',
       alert_level:    0,
@@ -164,7 +163,6 @@ export default function DataEntryPage() {
       reset({
         name:           '',
         lot_number:     '',
-        job_function:   '',
         personnel_type: data.personnel_type,
         iso_class:      data.iso_class,
         alert_level:    data.alert_level,
@@ -269,11 +267,6 @@ export default function DataEntryPage() {
                   {errors.lot_number && <p className="mt-1 text-xs text-red-500">{errors.lot_number.message}</p>}
                 </div>
                 <div>
-                  <label className="label" htmlFor="job_function">Job Function *</label>
-                  <input id="job_function" {...register('job_function')} className={`input ${errors.job_function ? 'input-error' : ''}`} placeholder="e.g. Aseptic Fill" />
-                  {errors.job_function && <p className="mt-1 text-xs text-red-500">{errors.job_function.message}</p>}
-                </div>
-                <div>
                   <label className="label" htmlFor="personnel_type">Personnel Type *</label>
                   <select id="personnel_type" {...register('personnel_type')} className="select">
                     {PERSONNEL_TYPES.map(t => (
@@ -284,14 +277,14 @@ export default function DataEntryPage() {
                     This determines which locations and ISO thresholds apply.
                   </p>
                 </div>
-                {/* Hit Date — full-width on its own row */}
-                <div className="sm:col-span-2">
+                {/* Hit Date */}
+                <div>
                   <label className="label" htmlFor="hit_date">Date of Hit *</label>
                   <input
                     id="hit_date"
                     type="date"
                     {...register('hit_date')}
-                    className={`input max-w-xs ${errors.hit_date ? 'input-error' : ''}`}
+                    className={`input ${errors.hit_date ? 'input-error' : ''}`}
                   />
                   <p className="mt-1 text-xs text-surface-400 dark:text-surface-500">
                     The date the excursion hit was observed (not the entry date).
@@ -320,11 +313,23 @@ export default function DataEntryPage() {
               <div className="flex items-start gap-2 p-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs">
                 <Info size={14} className="shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-semibold">ISO 5</span> locations (critical zone) have a stricter action level of <strong>1</strong>.{' '}
-                  <span className="font-semibold">ISO 7</span> locations have an action level of <strong>4</strong>.
-                  {values.personnel_type === 'Crimping'
-                    ? ' Crimping personnel have an alert level of 2 for all locations.'
-                    : ' Filling/Stoppering personnel have an alert level of 0 for all locations.'}
+                  {values.personnel_type === 'Filling' ? (
+                    <>
+                      <span className="font-semibold">Filling / Stoppering</span> personnel:
+                      <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                        <li><strong>ISO 5 Fingertips</strong> — Alert: 0 CFU, Action: &gt;0 CFU</li>
+                        <li><strong>ISO 7 Sleeves</strong> — Alert: &gt;1 CFU, Action: &gt;3 CFU</li>
+                        <li><strong>ISO 7 Gown</strong> — Alert: &gt;5 CFU, Action: &gt;10 CFU</li>
+                      </ul>
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-semibold">Crimping / Helper</span> personnel:
+                      <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                        <li><strong>ISO 7 Finger Tips</strong> — Alert: &gt;1 CFU, Action: &gt;3 CFU</li>
+                      </ul>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -445,7 +450,6 @@ export default function DataEntryPage() {
                   ['Name',           values.name],
                   ['Lot Number',     values.lot_number],
                   ['Date of Hit',    values.hit_date ? (() => { const [y,m,d] = values.hit_date.split('-'); return `${m}-${d}-${y}`; })() : ''],
-                  ['Job Function',   values.job_function],
                   ['Personnel Type', PERSONNEL_TYPE_LABELS[values.personnel_type as PersonnelType]],
                   ['Total Hits',     String(totalHits)],
                 ].map(([k, v]) => (
@@ -518,7 +522,17 @@ export default function DataEntryPage() {
             {step < STEPS.length - 1 ? (
               <button
                 type="button"
-                onClick={() => setStep(s => s + 1)}
+                onClick={async () => {
+                  // Validate current step's fields before advancing
+                  let fieldsToValidate: (keyof FormData)[] = [];
+                  if (step === 0) fieldsToValidate = ['name', 'lot_number', 'hit_date'];
+                  const valid = fieldsToValidate.length === 0 || await trigger(fieldsToValidate);
+                  if (!valid) {
+                    toast.error('Please fill in all required fields before continuing.');
+                    return;
+                  }
+                  setStep(s => s + 1);
+                }}
                 className="btn-primary"
               >
                 Next

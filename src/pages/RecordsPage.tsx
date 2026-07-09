@@ -182,7 +182,7 @@ export default function RecordsPage() {
   const filtered = records
     .filter(r => {
       const q = search.toLowerCase();
-      return !q || r.name.toLowerCase().includes(q) || r.lot_number.toLowerCase().includes(q) || r.job_function.toLowerCase().includes(q);
+      return !q || r.name.toLowerCase().includes(q) || r.lot_number.toLowerCase().includes(q) || (r.job_function ?? '').toLowerCase().includes(q);
     })
     .sort((a, b) => {
       let av: string | number, bv: string | number;

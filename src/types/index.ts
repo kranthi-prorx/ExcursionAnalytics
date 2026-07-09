@@ -25,26 +25,31 @@ export function getLocationConfig(
   location: string
 ): LocationConfig {
   if (personnelType === 'Filling') {
-    // Filling/Stoppering Personnel
-    // Gown & Sleeve locations → ISO 7: Alert 0, Action 4
-    // Finger locations → ISO 5: Alert 0, Action 1
-    if (location === 'Left Finger' || location === 'Right Finger') {
+    // Filling / Stoppering Personnel (per SOP)
+    // ISO 5  — Fingertips:  Alert Level 0,  Action Level >0  (i.e. ≥1)
+    // ISO 7  — Sleeves:     Alert Level >1 (≥2), Action Level >3 (≥4)
+    // ISO 7  — Gown:        Alert Level >5 (≥6), Action Level >10 (≥11)
+    if (location === 'Left Fingertips' || location === 'Right Fingertips') {
       return { iso_class: 'ISO 5', alert_level: 0, action_level: 1 };
     }
-    return { iso_class: 'ISO 7', alert_level: 0, action_level: 4 };
+    if (location === 'Left Sleeve' || location === 'Right Sleeve') {
+      return { iso_class: 'ISO 7', alert_level: 2, action_level: 4 };
+    }
+    // Gown locations
+    return { iso_class: 'ISO 7', alert_level: 6, action_level: 11 };
   }
 
-  // Crimping Personnel — only Finger locations → ISO 7: Alert 2, Action 4
+  // Crimping / Helper — Finger Tips only → ISO 7: Alert >1 (≥2), Action >3 (≥4)
   return { iso_class: 'ISO 7', alert_level: 2, action_level: 4 };
 }
 
 // Locations available per personnel type
 export function getLocationsForPersonnelType(personnelType: PersonnelType): string[] {
   if (personnelType === 'Filling') {
-    return ['Left Gown', 'Right Gown', 'Left Sleeve', 'Right Sleeve', 'Left Finger', 'Right Finger'];
+    return ['Left Gown', 'Right Gown', 'Left Sleeve', 'Right Sleeve', 'Left Fingertips', 'Right Fingertips'];
   }
-  // Crimping — finger locations only
-  return ['Left Finger', 'Right Finger'];
+  // Crimping / Helper — finger tip locations only
+  return ['Left Finger Tips', 'Right Finger Tips'];
 }
 
 export interface HitLocation {
@@ -141,8 +146,10 @@ export const LOCATIONS = [
   'Right Gown',
   'Left Sleeve',
   'Right Sleeve',
-  'Left Finger',
-  'Right Finger',
+  'Left Fingertips',
+  'Right Fingertips',
+  'Left Finger Tips',
+  'Right Finger Tips',
 ] as const;
 
 export type LocationKey = typeof LOCATIONS[number];

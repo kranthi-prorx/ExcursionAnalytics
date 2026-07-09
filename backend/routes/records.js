@@ -119,9 +119,9 @@ router.get('/:id', authMiddleware, async (req, res) => {
 
 // POST /api/records
 router.post('/', authMiddleware, async (req, res) => {
-  const { name, lot_number, job_function, personnel_type, iso_class, alert_level, action_level, hit_date, hit_details } = req.body;
-  if (!name || !lot_number || !job_function) {
-    return res.status(400).json({ message: 'Name, lot_number, and job_function are required' });
+  const { name, lot_number, job_function = '', personnel_type, iso_class, alert_level, action_level, hit_date, hit_details } = req.body;
+  if (!name || !lot_number) {
+    return res.status(400).json({ message: 'Name and lot_number are required' });
   }
   if (!hit_date) {
     return res.status(400).json({ message: 'hit_date is required' });
