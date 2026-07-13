@@ -234,7 +234,7 @@ export default function RecordsPage() {
     const flat = filtered.map(r => ({
       Name: r.name, LotNumber: r.lot_number, HitDate: fmtHitDate(r.hit_date),
       JobFunction: r.job_function, PersonnelType: r.personnel_type,
-      ISOClass: r.iso_class, AlertLevel: r.alert_level, ActionLevel: r.action_level,
+      ISOClass: r.personnel_type === 'Filling' ? 'ISO 5 & 7' : r.iso_class, AlertLevel: r.alert_level, ActionLevel: r.action_level,
       TotalHits: Number(r.total_hits ?? 0), RecordedAt: r.timestamp,
     }));
     downloadCSV(flat as any, `records-${Date.now()}.csv`);
@@ -288,12 +288,17 @@ export default function RecordsPage() {
     // PM Excursion
     doc.setFontSize(14); doc.setTextColor(40, 40, 40);
     doc.text('PM Excursion Records', M, 18);
-    autoTable(doc, {
-      startY: 26,
-      head: [['Name', 'Lot', 'Hit Date', 'Type', 'ISO', 'Hits', 'Recorded At']],
-      body: filtered.map(r => [r.name, r.lot_number, fmtHitDate(r.hit_date), r.personnel_type, r.iso_class, r.total_hits ?? 0, new Date(r.timestamp).toLocaleString()]),
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [99, 102, 241] },
+    (doc as any).autoTable({
+        startY: M + 20,
+        head: [['Name', 'Lot', 'Hit Date', 'Type', 'ISO Class', 'Hits', 'Recorded', 'Entered By']],
+        body: filtered.map(r => [
+          r.name, r.lot_number, fmtHitDate(r.hit_date),
+          r.personnel_type,
+          r.personnel_type === 'Filling' ? 'ISO 5 / 7' : r.iso_class,
+          r.total_hits?.toString() ?? '0',
+          new Date(r.timestamp).toLocaleString(),
+          (r as any).created_by_name || '—'
+        ]),headStyles: { fillColor: [99, 102, 241] },
     });
     doc.save(`records-${Date.now()}.pdf`);
     toast.success('PDF exported!');
@@ -362,7 +367,16 @@ export default function RecordsPage() {
                         <td className="font-mono text-xs">{rec.lot_number}</td>
                         <td className="text-xs font-medium text-surface-600 dark:text-surface-400">{fmtHitDate(rec.hit_date)}</td>
                         <td><span className="badge bg-surface-100 dark:bg-surface-700 text-surface-600 dark:text-surface-400">{rec.personnel_type}</span></td>
-                        <td><span className={rec.iso_class === 'ISO 5' ? 'badge-iso5' : 'badge-iso7'}>{rec.iso_class}</span></td>
+                        <td>
+                          {rec.personnel_type === 'Filling' ? (
+                            <div className="flex items-center gap-1">
+                              <span className="badge-iso5">ISO 5</span>
+                              <span className="badge-iso7">ISO 7</span>
+                            </div>
+                          ) : (
+                            <span className={rec.iso_class === 'ISO 5' ? 'badge-iso5' : 'badge-iso7'}>{rec.iso_class}</span>
+                          )}
+                        </td>
                         <td><span className={clsx('badge', hits > 0 ? 'badge-hit' : 'badge-no-hit')}>{hits}</span></td>
                         <td className="text-xs text-surface-500 dark:text-surface-400">{(rec as any).created_by_name || '—'}</td>
                         <td onClick={e => e.stopPropagation()}>

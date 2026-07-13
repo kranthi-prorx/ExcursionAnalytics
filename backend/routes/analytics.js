@@ -115,8 +115,8 @@ router.get('/by-person', authMiddleware, async (req, res) => {
         r.name,
         COALESCE(SUM(hd.hit_value),0)::int AS hits,
         COUNT(DISTINCT r.id)::int AS records,
-        COALESCE(SUM(CASE WHEN r.iso_class='ISO 5' THEN hd.hit_value ELSE 0 END),0)::int AS iso5,
-        COALESCE(SUM(CASE WHEN r.iso_class='ISO 7' THEN hd.hit_value ELSE 0 END),0)::int AS iso7
+        COALESCE(SUM(CASE WHEN hd.iso_class='ISO 5' THEN hd.hit_value ELSE 0 END),0)::int AS iso5,
+        COALESCE(SUM(CASE WHEN hd.iso_class='ISO 7' THEN hd.hit_value ELSE 0 END),0)::int AS iso7
       FROM records r
       LEFT JOIN hit_details hd ON hd.record_id = r.id
       ${where}
@@ -182,13 +182,13 @@ router.get('/by-iso', authMiddleware, async (req, res) => {
     const { where, params } = buildFilters(req.query);
     const sql = `
       SELECT
-        r.iso_class,
+        hd.iso_class,
         COALESCE(SUM(hd.hit_value),0)::int AS hits
       FROM records r
       LEFT JOIN hit_details hd ON hd.record_id = r.id
       ${where}
-      GROUP BY r.iso_class
-      ORDER BY r.iso_class
+      GROUP BY hd.iso_class
+      ORDER BY hd.iso_class
     `;
     const result = await pool.query(sql, params);
     res.json(result.rows);
