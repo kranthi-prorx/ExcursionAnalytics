@@ -391,7 +391,7 @@ export default function DataEntryPage() {
                   const isoClass = field.iso_class as string;
                   const alertLvl = field.alert_level;
                   const actionLvl = field.action_level;
-                  const isAction = alertLvl > 0 ? hitVal >= actionLvl : hitVal > actionLvl;
+                  const isAction = hitVal >= actionLvl;
                   const isAlert  = !isAction && alertLvl > 0 && hitVal >= alertLvl;
                   const hasHit   = hitVal > 0;
 
@@ -477,7 +477,7 @@ export default function DataEntryPage() {
                     </thead>
                     <tbody>
                       {values.hit_details?.map(h => {
-                        const isAction = h.alert_level > 0 ? h.hit_value >= h.action_level : h.hit_value > h.action_level;
+                        const isAction = h.hit_value >= h.action_level;
                         const isAlert  = !isAction && h.alert_level > 0 && h.hit_value >= h.alert_level;
                         return (
                           <tr key={h.location}>
