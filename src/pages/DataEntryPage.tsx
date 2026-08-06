@@ -1,9 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { recordsAPI } from '../lib/api';
+import { recordsAPI, profilesAPI } from '../lib/api';
+import { queryCache } from '../lib/queryCache';
+import ProfileCombobox from '../components/SearchableDropdown';
+import type { DropdownOption } from '../components/SearchableDropdown';
 import type { PersonnelType } from '../types';
 import {
   PERSONNEL_TYPES,
@@ -14,6 +17,7 @@ import {
 import { PlusCircle, CheckCircle, ChevronRight, ChevronLeft, Save, Minus, Plus, Lock, Info, ArrowLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { clsx } from '../lib/utils';
+import { getCombinedFingertipStatus } from '../lib/locationHelpers';
 
 // ─── Zod schema ──────────────────────────────────────────────────────────────
 const hitDetailSchema = z.object({
@@ -31,7 +35,7 @@ const recordSchema = z.object({
   iso_class:      z.string(),   // derived, not user-entered
   alert_level:    z.coerce.number().int().min(0),
   action_level:   z.coerce.number().int().min(0),
-  hit_date:       z.string().min(1, 'Hit date is required'),
+  date_of_batch:  z.string().min(1, 'Date of Batch is required'),
   hit_details:    z.array(hitDetailSchema).min(1),
 });
 
@@ -115,6 +119,10 @@ export default function DataEntryPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<string[]>([]);
 
+  // ── Confirmed profile selections (separate from form text values) ──────────
+  const [selectedPersonnel, setSelectedPersonnel] = useState<DropdownOption | null>(null);
+  const [selectedLot, setSelectedLot]             = useState<DropdownOption | null>(null);
+
   const {
     register,
     control,
@@ -133,7 +141,7 @@ export default function DataEntryPage() {
       iso_class:      'ISO 7',
       alert_level:    0,
       action_level:   4,
-      hit_date:       new Date().toISOString().slice(0, 10), // today
+      date_of_batch:  new Date().toISOString().slice(0, 10), // today
       hit_details:    buildHitDetails('Filling'),
     },
   });
@@ -154,12 +162,17 @@ export default function DataEntryPage() {
   const onSubmit = async (data: FormData) => {
     setSubmitting(true);
     try {
-      await recordsAPI.create(data as any);
+      // Send both field names for backend compatibility (hit_date fallback)
+      await recordsAPI.create({ ...data, hit_date: data.date_of_batch } as any);
+      // Invalidate dashboard and analytics caches so all users see the new record immediately.
+      queryCache.invalidate('dashboard:');
+      queryCache.invalidate('analytics:');
       setSubmitted(prev => [...prev, `${data.name} / ${data.lot_number}`]);
       toast.success('Record saved successfully!');
-      // Full reset — clear all personal/lot info and zero out all hit counts,
-      // but keep personnel_type so the next entry starts in the same mode.
+      // Reset name/lot (clear confirmed selections) but keep date + personnel_type
       const freshDetails = buildHitDetails(data.personnel_type as PersonnelType);
+      setSelectedPersonnel(null);
+      setSelectedLot(null);
       reset({
         name:           '',
         lot_number:     '',
@@ -167,7 +180,7 @@ export default function DataEntryPage() {
         iso_class:      data.iso_class,
         alert_level:    data.alert_level,
         action_level:   data.action_level,
-        hit_date:       data.hit_date,   // keep the same date for quick batch entry
+        date_of_batch:  data.date_of_batch, // keep same date for quick batch entry
         hit_details:    freshDetails,
       });
       setStep(0);
@@ -257,14 +270,60 @@ export default function DataEntryPage() {
               <h2 className="text-base font-semibold text-surface-800 dark:text-surface-200">Personnel Information</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <div>
-                  <label className="label" htmlFor="name">Full Name *</label>
-                  <input id="name" {...register('name')} className={`input ${errors.name ? 'input-error' : ''}`} placeholder="John Smith" />
-                  {errors.name && <p className="mt-1 text-xs text-red-500">{errors.name.message}</p>}
+                  <ProfileCombobox
+                    id="name"
+                    label="Full Name *"
+                    selectedOption={selectedPersonnel}
+                    onSelect={(opt) => {
+                      setSelectedPersonnel(opt);
+                      setValue('name', opt.label, { shouldValidate: true, shouldDirty: true });
+                    }}
+                    onClear={() => {
+                      setSelectedPersonnel(null);
+                      setValue('name', '', { shouldValidate: false });
+                    }}
+                    onSearch={async (q) => {
+                      const res = await profilesAPI.searchPersonnel(q);
+                      return res.data.map(p => ({
+                        id: p.id,
+                        label: p.display_name,
+                        sublabel: p.personnel_type === 'Filling' ? 'Filling / Stoppering' : 'Crimping / Helper',
+                      }));
+                    }}
+                    onCreateNew={async (name) => {
+                      const res = await profilesAPI.createPersonnel({ name, personnel_type: values.personnel_type });
+                      return { id: res.data.id, label: res.data.display_name };
+                    }}
+                    createSuccessMessage="Personnel profile created."
+                    placeholder="Search or create personnel…"
+                    error={errors.name?.message}
+                  />
                 </div>
                 <div>
-                  <label className="label" htmlFor="lot_number">Lot Number *</label>
-                  <input id="lot_number" {...register('lot_number')} className={`input ${errors.lot_number ? 'input-error' : ''}`} placeholder="LOT-2024-001" />
-                  {errors.lot_number && <p className="mt-1 text-xs text-red-500">{errors.lot_number.message}</p>}
+                  <ProfileCombobox
+                    id="lot_number"
+                    label="Lot Number *"
+                    selectedOption={selectedLot}
+                    onSelect={(opt) => {
+                      setSelectedLot(opt);
+                      setValue('lot_number', opt.label, { shouldValidate: true, shouldDirty: true });
+                    }}
+                    onClear={() => {
+                      setSelectedLot(null);
+                      setValue('lot_number', '', { shouldValidate: false });
+                    }}
+                    onSearch={async (q) => {
+                      const res = await profilesAPI.searchLots(q);
+                      return res.data.map(l => ({ id: l.id, label: l.display_lot }));
+                    }}
+                    onCreateNew={async (lotNumber) => {
+                      const res = await profilesAPI.createLot({ lot_number: lotNumber });
+                      return { id: res.data.id, label: res.data.display_lot };
+                    }}
+                    createSuccessMessage="Lot profile created."
+                    placeholder="Search or create lot…"
+                    error={errors.lot_number?.message}
+                  />
                 </div>
                 <div>
                   <label className="label" htmlFor="personnel_type">Personnel Type *</label>
@@ -277,19 +336,19 @@ export default function DataEntryPage() {
                     This determines which locations and ISO thresholds apply.
                   </p>
                 </div>
-                {/* Hit Date */}
+                {/* Date of Batch */}
                 <div>
-                  <label className="label" htmlFor="hit_date">Date of Hit *</label>
+                  <label className="label" htmlFor="date_of_batch">Date of Batch *</label>
                   <input
-                    id="hit_date"
+                    id="date_of_batch"
                     type="date"
-                    {...register('hit_date')}
-                    className={`input ${errors.hit_date ? 'input-error' : ''}`}
+                    {...register('date_of_batch')}
+                    className={`input ${errors.date_of_batch ? 'input-error' : ''}`}
                   />
                   <p className="mt-1 text-xs text-surface-400 dark:text-surface-500">
-                    The date the excursion hit was observed (not the entry date).
+                    The production date associated with this batch.
                   </p>
-                  {errors.hit_date && <p className="mt-1 text-xs text-red-500">{errors.hit_date.message}</p>}
+                  {errors.date_of_batch && <p className="mt-1 text-xs text-red-500">{errors.date_of_batch.message}</p>}
                 </div>
               </div>
             </div>
@@ -438,6 +497,46 @@ export default function DataEntryPage() {
                   );
                 })}
               </div>
+
+              {/* Combined Fingertip Summary */}
+              {(() => {
+                const hd = (values.hit_details ?? []).map(h => ({
+                  location: h.location, hit_value: h.hit_value || 0, iso_class: h.iso_class,
+                }));
+                const results = getCombinedFingertipStatus(hd);
+                if (results.length === 0) return null;
+                return (
+                  <div className="space-y-2 mt-2">
+                    {results.map(r => (
+                      <div key={r.isoClass} className={clsx(
+                        'p-4 rounded-xl border-2 transition-all duration-200',
+                        r.status === 'exceeded'
+                          ? 'border-red-400 dark:border-red-600 bg-red-50/60 dark:bg-red-900/15'
+                          : 'border-surface-200 dark:border-surface-700 bg-surface-50/50 dark:bg-surface-800/50'
+                      )}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-surface-700 dark:text-surface-300">Combined Fingertips</span>
+                            <IsoBadge iso={r.isoClass} />
+                            {r.status === 'exceeded' && (
+                              <span className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase tracking-wide">⚠ {r.thresholdLabel}</span>
+                            )}
+                          </div>
+                          <span className={clsx('text-lg font-bold', r.status === 'exceeded' ? 'text-red-600 dark:text-red-400' : 'text-surface-700 dark:text-surface-300')}>
+                            {r.combinedHits}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-4 mt-2 text-xs text-surface-500 dark:text-surface-400">
+                          <span>Left: <strong className="text-surface-700 dark:text-surface-300">{r.leftHits}</strong></span>
+                          <span>+ Right: <strong className="text-surface-700 dark:text-surface-300">{r.rightHits}</strong></span>
+                          <span>= Combined: <strong className="text-surface-700 dark:text-surface-300">{r.combinedHits}</strong></span>
+                          <span className="ml-auto">({r.thresholdLabel} &gt; {r.actionThreshold})</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -449,7 +548,7 @@ export default function DataEntryPage() {
                 {[
                   ['Name',           values.name],
                   ['Lot Number',     values.lot_number],
-                  ['Date of Hit',    values.hit_date ? (() => { const [y,m,d] = values.hit_date.split('-'); return `${m}-${d}-${y}`; })() : ''],
+                  ['Date of Batch',  values.date_of_batch ? (() => { const [y,m,d] = values.date_of_batch.split('-'); return `${m}-${d}-${y}`; })() : ''],
                   ['Personnel Type', PERSONNEL_TYPE_LABELS[values.personnel_type as PersonnelType]],
                   ['Total Hits',     String(totalHits)],
                 ].map(([k, v]) => (
@@ -504,6 +603,41 @@ export default function DataEntryPage() {
                   </table>
                 </div>
               </div>
+
+              {/* Combined fingertip summary in review */}
+              {(() => {
+                const hd = (values.hit_details ?? []).map(h => ({
+                  location: h.location, hit_value: h.hit_value || 0, iso_class: h.iso_class,
+                }));
+                const results = getCombinedFingertipStatus(hd);
+                if (results.length === 0) return null;
+                return (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-widest">Combined Fingertips</p>
+                    {results.map(r => (
+                      <div key={r.isoClass} className={clsx(
+                        'rounded-xl p-3 border text-xs',
+                        r.status === 'exceeded'
+                          ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+                          : 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+                      )}>
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold">Fingertips — {r.isoClass}</span>
+                          <span className={clsx('badge', r.status === 'exceeded' ? 'badge-hit' : 'badge-no-hit')}>
+                            {r.status === 'exceeded' ? `⚠ ${r.thresholdLabel}` : 'OK'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 mt-1">
+                          <span>L: {r.leftHits}</span>
+                          <span>R: {r.rightHits}</span>
+                          <span className="font-bold">Combined: {r.combinedHits}</span>
+                          <span className="text-surface-400">({r.thresholdLabel} &gt; {r.actionThreshold})</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -523,13 +657,22 @@ export default function DataEntryPage() {
               <button
                 type="button"
                 onClick={async () => {
-                  // Validate current step's fields before advancing
-                  let fieldsToValidate: (keyof FormData)[] = [];
-                  if (step === 0) fieldsToValidate = ['name', 'lot_number', 'hit_date'];
-                  const valid = fieldsToValidate.length === 0 || await trigger(fieldsToValidate);
-                  if (!valid) {
-                    toast.error('Please fill in all required fields before continuing.');
-                    return;
+                  // Step 0: validate name, lot_number, date_of_batch
+                  // Also check that a profile was actually confirmed (not just typed)
+                  if (step === 0) {
+                    if (!selectedPersonnel) {
+                      toast.error('Please select or create a personnel profile.');
+                      return;
+                    }
+                    if (!selectedLot) {
+                      toast.error('Please select or create a lot profile.');
+                      return;
+                    }
+                    const valid = await trigger(['name', 'lot_number', 'date_of_batch']);
+                    if (!valid) {
+                      toast.error('Please fill in all required fields before continuing.');
+                      return;
+                    }
                   }
                   setStep(s => s + 1);
                 }}

@@ -1,8 +1,11 @@
-import { X, User, Package, Briefcase, MapPin, Shield, Clock, Activity, Calendar, AlertTriangle } from 'lucide-react';
+import { X, User, Package, Briefcase, MapPin, Shield, Clock, Activity, Calendar, AlertTriangle, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import type { DrillDownData, ExcursionRecord } from '../types';
 import { LOCATIONS } from '../types';
 import { formatDate, alertColor, clsx } from '../lib/utils';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { getLocationDisplayLabel, getCombinedFingertipStatus, isFingertipLocation } from '../lib/locationHelpers';
+
+const DRAWER_PAGE_SIZE = 20;
 
 interface Props {
   data: DrillDownData | null;
@@ -73,6 +76,38 @@ function PersonnelSummary({ records }: { records: ExcursionRecord[] }) {
   );
 }
 
+// ─── Combined Fingertip Status Banner ─────────────────────────────────────────
+function FingertipBanner({ hitDetails }: { hitDetails: Array<{ location: string; hit_value: number; iso_class: string }> }) {
+  const results = getCombinedFingertipStatus(hitDetails);
+  if (results.length === 0) return null;
+
+  return (
+    <>
+      {results.map(result => (
+        <div key={result.isoClass} className={clsx(
+          'rounded-xl p-3 border text-xs',
+          result.status === 'exceeded'
+            ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+            : 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+        )}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="font-semibold">Fingertips — {result.isoClass} (Combined)</span>
+            <span className={clsx('badge', result.status === 'exceeded' ? 'badge-hit' : 'badge-no-hit')}>
+              {result.status === 'exceeded' ? `⚠ ${result.thresholdLabel}` : 'OK'}
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span>L: {result.leftHits}</span>
+            <span>R: {result.rightHits}</span>
+            <span className="font-bold">Combined: {result.combinedHits}</span>
+            <span className="text-surface-400">({result.thresholdLabel} &gt; {result.actionThreshold})</span>
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 // ─── Individual Record Card ───────────────────────────────────────────────────
 function RecordCard({ rec }: { rec: ExcursionRecord }) {
   const totalHits = rec.hit_details?.reduce((s, h) => s + (h.hit_value ?? 0), 0) ?? 0;
@@ -133,7 +168,12 @@ function RecordCard({ rec }: { rec: ExcursionRecord }) {
         <span>{rec.job_function}</span>
       </div>
 
-      {/* Hit locations grid */}
+      {/* Combined fingertip status (if applicable) */}
+      {rec.hit_details && rec.hit_details.length > 0 && (
+        <FingertipBanner hitDetails={rec.hit_details} />
+      )}
+
+      {/* Hit locations grid — with ISO class labels */}
       {rec.hit_details && rec.hit_details.length > 0 && (
         <div>
           <p className="text-xs font-semibold text-surface-500 dark:text-surface-400 mb-2 flex items-center gap-1">
@@ -141,13 +181,13 @@ function RecordCard({ rec }: { rec: ExcursionRecord }) {
             LOCATION HITS
           </p>
           <div className="grid grid-cols-3 gap-1.5">
-            {LOCATIONS.map(loc => {
-              const detail = rec.hit_details.find(h => h.location === loc);
-              const hit = (detail?.hit_value ?? 0) > 0;
+            {rec.hit_details.map(h => {
+              const hit = (h.hit_value ?? 0) > 0;
+              const label = getLocationDisplayLabel(h.location, h.iso_class);
               return (
-                <div key={loc} className={hit ? 'location-hit' : 'location-no-hit'}>
-                  <div className="text-[10px] leading-tight font-semibold">{loc}</div>
-                  <div className="text-base font-bold mt-0.5">{detail?.hit_value ?? 0}</div>
+                <div key={h.location} className={hit ? 'location-hit' : 'location-no-hit'}>
+                  <div className="text-[10px] leading-tight font-semibold">{label}</div>
+                  <div className="text-base font-bold mt-0.5">{h.hit_value ?? 0}</div>
                 </div>
               );
             })}
@@ -162,6 +202,14 @@ function RecordCard({ rec }: { rec: ExcursionRecord }) {
 export default function DrillDownDrawer({ data, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const isDateDrill = data?.label?.startsWith('📅');
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+
+  // Reset pagination when data changes
+  useEffect(() => {
+    setPage(1);
+    setSearch('');
+  }, [data]);
 
   // Close on Escape
   useEffect(() => {
@@ -171,6 +219,18 @@ export default function DrillDownDrawer({ data, onClose }: Props) {
   }, [onClose]);
 
   if (!data) return null;
+
+  // Filter records by search
+  const filteredRecords = data.records.filter(r => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return r.name.toLowerCase().includes(q) ||
+           r.lot_number.toLowerCase().includes(q) ||
+           (r.job_function ?? '').toLowerCase().includes(q);
+  });
+
+  const totalPages = Math.ceil(filteredRecords.length / DRAWER_PAGE_SIZE);
+  const pagedRecords = filteredRecords.slice((page - 1) * DRAWER_PAGE_SIZE, page * DRAWER_PAGE_SIZE);
 
   const totalHits = data.records.reduce(
     (sum, r) => sum + (r.hit_details?.reduce((s, h) => s + (h.hit_value ?? 0), 0) ?? 0), 0
@@ -198,13 +258,29 @@ export default function DrillDownDrawer({ data, onClose }: Props) {
               <span className="truncate">{data.label}</span>
             </h2>
             <p className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
-              {data.records.length} record{data.records.length !== 1 ? 's' : ''} &bull; {totalHits} total hit{totalHits !== 1 ? 's' : ''}
+              {filteredRecords.length} record{filteredRecords.length !== 1 ? 's' : ''} &bull; {totalHits} total hit{totalHits !== 1 ? 's' : ''}
             </p>
           </div>
           <button onClick={onClose} className="btn-ghost p-1.5 rounded-xl ml-2 shrink-0" title="Close (Esc)">
             <X size={20} />
           </button>
         </div>
+
+        {/* Search bar (shown when more than 10 records) */}
+        {data.records.length > 10 && (
+          <div className="px-5 py-2 border-b border-surface-100 dark:border-surface-800">
+            <div className="relative">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
+              <input
+                type="search"
+                placeholder="Search records…"
+                value={search}
+                onChange={e => { setSearch(e.target.value); setPage(1); }}
+                className="input pl-8 !py-1.5 text-xs"
+              />
+            </div>
+          </div>
+        )}
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto scrollbar-thin">
@@ -216,7 +292,7 @@ export default function DrillDownDrawer({ data, onClose }: Props) {
 
           {/* ── Individual records ── */}
           <div className="p-4 space-y-3">
-            {data.records.length === 0 ? (
+            {pagedRecords.length === 0 ? (
               <div className="text-center py-16 space-y-2">
                 <div className="text-4xl">📭</div>
                 <p className="text-surface-400 dark:text-surface-600 text-sm">No records for this selection</p>
@@ -228,10 +304,30 @@ export default function DrillDownDrawer({ data, onClose }: Props) {
                     All Records
                   </p>
                 )}
-                {data.records.map(rec => <RecordCard key={rec.id} rec={rec} />)}
+                {pagedRecords.map(rec => <RecordCard key={rec.id} rec={rec} />)}
               </>
             )}
           </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-5 py-3 border-t border-surface-100 dark:border-surface-800">
+              <p className="text-xs text-surface-500">
+                {((page - 1) * DRAWER_PAGE_SIZE) + 1}–{Math.min(page * DRAWER_PAGE_SIZE, filteredRecords.length)} of {filteredRecords.length}
+              </p>
+              <div className="flex items-center gap-1">
+                <button onClick={() => setPage(p => p - 1)} disabled={page === 1} className="btn-ghost p-1.5">
+                  <ChevronLeft size={14} />
+                </button>
+                <span className="text-xs font-semibold text-surface-600 dark:text-surface-300 px-2">
+                  {page} / {totalPages}
+                </span>
+                <button onClick={() => setPage(p => p + 1)} disabled={page === totalPages} className="btn-ghost p-1.5">
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>

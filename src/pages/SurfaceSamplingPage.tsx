@@ -9,6 +9,7 @@ import {
 import toast from 'react-hot-toast';
 import { clsx } from '../lib/utils';
 import api from '../lib/api';
+import { queryCache } from '../lib/queryCache';
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 const schema = z.object({
@@ -57,6 +58,9 @@ export default function SurfaceSamplingPage() {
     setSubmitting(true);
     try {
       await api.post('/surface', data);
+      // Invalidate shared caches so all sessions see the new surface entry.
+      queryCache.invalidate('dashboard:');
+      queryCache.invalidate('analytics:');
       setSubmitted(prev => [...prev, `${data.sample_location} / ${data.lot_number}`]);
       toast.success('Entry saved successfully!');
       reset({ ...defaultValues, sample_date: data.sample_date, iso_class: data.iso_class });

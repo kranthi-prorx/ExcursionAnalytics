@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { KPISummary, TrendData, PersonHits, LocationHits, FilterState, DrillDownData, ExcursionRecord } from '../types';
+import type { KPISummary, TrendData, PersonHits, LocationHits, FilterState, DrillDownData, ExcursionRecord, LotHits, BatchTotal } from '../types';
 import { analyticsAPI, recordsAPI, viableAPI } from '../lib/api';
 import { queryCache } from '../lib/queryCache';
 import type { ViableByLot, ViableRecord } from '../lib/api';
@@ -7,9 +7,10 @@ import KPICards from '../components/KPICards';
 import FilterBar from '../components/FilterBar';
 import DrillDownDrawer from '../components/DrillDownDrawer';
 import ViableDrawer from '../components/ViableDrawer';
+import FullRankingDrawer from '../components/FullRankingDrawer';
 import {
   TrendsChart, PersonChart, LocationChart, ISOPieChart, HeatmapChart, LotChart, LotTrendsChart,
-  ViableCFUChart, ParticleCountChart
+  ViableCFUChart, ParticleCountChart, BatchScatterChart
 } from '../components/Charts';
 import { getDefaultFilters } from '../lib/utils';
 import { Download, RefreshCw, TrendingUp, Users, MapPin, Shield, Package, Grid } from 'lucide-react';
@@ -20,16 +21,26 @@ import autoTable from 'jspdf-autotable';
 import { toJpeg } from 'html-to-image';
 import { useAuth } from '../contexts/AuthContext';
 
-function ChartCard({ title, icon: Icon, children, className, id }: {
+function ChartCard({ title, icon: Icon, children, className, id, onClick }: {
   title: string; icon: React.ElementType; children: React.ReactNode; className?: string; id?: string;
+  onClick?: () => void;
 }) {
   return (
     <div id={id} className={`chart-container ${className ?? ''}`}>
-      <div className="flex items-center gap-2">
+      <div
+        className={`flex items-center gap-2 ${onClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+        onClick={onClick}
+        title={onClick ? `Click to see all ${title.toLowerCase()} records` : undefined}
+      >
         <div className="w-7 h-7 rounded-lg bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center">
           <Icon size={14} className="text-brand-600 dark:text-brand-400" />
         </div>
         <h3 className="chart-title">{title}</h3>
+        {onClick && (
+          <span className="text-[10px] text-surface-400 dark:text-surface-500 font-medium ml-auto">
+            click title to drill-down
+          </span>
+        )}
       </div>
       {children}
     </div>
@@ -43,12 +54,13 @@ function Skeleton({ className }: { className?: string }) {
 export default function DashboardPage() {
   const { user } = useAuth();
   const canExport = user?.role === 'admin' || user?.role === 'manager';
-  const [filters, setFilters] = useState<FilterState>(getDefaultFilters('monthly'));
+  const [filters, setFilters] = useState<FilterState>(getDefaultFilters('yearly'));
   const [kpi, setKpi] = useState<KPISummary | null>(null);
   const [trends, setTrends] = useState<TrendData[]>([]);
+  const [scatter, setScatter] = useState<BatchTotal[]>([]);
   const [persons, setPersons] = useState<PersonHits[]>([]);
   const [locations, setLocations] = useState<LocationHits[]>([]);
-  const [lots, setLots] = useState<{ lot_number: string; hits: number }[]>([]);
+  const [lots, setLots] = useState<LotHits[]>([]);
   const [isoData, setIsoData] = useState<{ iso_class: string; hits: number }[]>([]);
   const [lotTrends, setLotTrends] = useState<{ date: string; lot_number: string; hits: number }[]>([]);
   const [viableByLot, setViableByLot] = useState<ViableByLot[]>([]);
@@ -57,6 +69,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [drawer, setDrawer] = useState<DrillDownData | null>(null);
   const [allRecords, setAllRecords] = useState<ExcursionRecord[]>([]);
+  const [rankingDrawer, setRankingDrawer] = useState<'person' | 'lot' | null>(null);
 
   const fetchAll = useCallback(async (force = false) => {
     // Build a stable cache key from the active filters
@@ -65,7 +78,7 @@ export default function DashboardPage() {
     // Serve from cache instantly on tab switch (skip loading flash)
     if (!force) {
       const cached = queryCache.get<{
-        kpi: KPISummary; trends: TrendData[]; persons: PersonHits[];
+        kpi: KPISummary; trends: TrendData[]; scatter: BatchTotal[]; persons: PersonHits[];
         locations: LocationHits[]; lots: { lot_number: string; hits: number }[];
         isoData: { iso_class: string; hits: number }[];
         lotTrends: { date: string; lot_number: string; hits: number }[];
@@ -74,6 +87,7 @@ export default function DashboardPage() {
       if (cached) {
         setKpi(cached.kpi);
         setTrends(cached.trends);
+        setScatter(cached.scatter);
         setPersons(cached.persons);
         setLocations(cached.locations);
         setLots(cached.lots);
@@ -89,9 +103,10 @@ export default function DashboardPage() {
 
     setLoading(true);
     try {
-      const [kpiRes, trendRes, personRes, locRes, lotRes, isoRes, lotTrendRes, recRes, viableRes, viableAllRes] = await Promise.allSettled([
+      const [kpiRes, trendRes, scatterRes, personRes, locRes, lotRes, isoRes, lotTrendRes, recRes, viableRes, viableAllRes] = await Promise.allSettled([
         analyticsAPI.kpi(filters),
         analyticsAPI.trends(filters),
+        analyticsAPI.batchDistribution(filters),
         analyticsAPI.byPerson(filters),
         analyticsAPI.byLocation(filters),
         analyticsAPI.byLot(filters),
@@ -134,6 +149,16 @@ export default function DashboardPage() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  // Re-fetch (bypassing cache) when the user returns to this tab.
+  // This makes records created by other users visible without requiring a page reload.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') fetchAll(true);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [fetchAll]);
+
   const openDrawer = (type: DrillDownData['type'], label: string, records: ExcursionRecord[]) => {
     setDrawer({ type, label, records });
   };
@@ -144,16 +169,22 @@ export default function DashboardPage() {
   };
 
   const handleTrendClick = (d: TrendData) => {
-    // Match records whose hit_date matches the clicked date
-    const recs = allRecords.filter(r => r.hit_date === d.date);
+    // Match records whose date_of_batch matches the clicked date
+    const recs = allRecords.filter(r => r.date_of_batch === d.date);
     openDrawer('record', `📅 ${d.date}  —  ${d.hits} hit${d.hits !== 1 ? 's' : ''}`, recs);
   };
 
   const handleLocationClick = (d: LocationHits) => {
+    // Use display_label for ISO-labeled location matching
+    const displayLabel = d.display_label || d.location;
     const recs = allRecords.filter(r =>
-      r.hit_details?.some(h => h.location === d.location && (h.hit_value ?? 0) > 0)
+      r.hit_details?.some(h => {
+        const rawMatch = h.location === d.location;
+        const logicalMatch = d.raw_locations?.some(rl => h.location === rl.location);
+        return (rawMatch || logicalMatch) && (h.hit_value ?? 0) > 0;
+      })
     );
-    openDrawer('location', d.location, recs);
+    openDrawer('location', displayLabel, recs);
   };
 
   const handleISOClick = (iso: string) => {
@@ -162,9 +193,18 @@ export default function DashboardPage() {
   };
 
   const handleLotClick = (lot: string) => {
-    const recs = allRecords.filter(r => r.lot_number === lot);
+    // Use normalized comparison for lot matching
+    const normLot = lot.trim().replace(/\s+/g, ' ').toLowerCase();
+    const recs = allRecords.filter(r =>
+      r.lot_number.trim().replace(/\s+/g, ' ').toLowerCase() === normLot
+    );
     openDrawer('lot', lot, recs);
   };
+
+  // Chart-level click handlers: open drill-down showing ALL data for the category
+  const handleAllPersons = () => openDrawer('all', '👥 All Personnel Hits', allRecords);
+  const handleAllLocations = () => openDrawer('all', '📍 All Location Hits', allRecords);
+  const handleAllLots = () => openDrawer('all', '📦 All Lot Hits', allRecords);
 
   const exportCSV = () => {
     if (!allRecords.length) return toast.error('No data to export');
@@ -291,9 +331,9 @@ export default function DashboardPage() {
         doc.text('Viable & Non-Viable Summary by Lot', M, M + 8);
         autoTable(doc, {
           startY: M + 13,
-          head: [['Lot Number', 'Samples', 'ISO 5 CFU', 'ISO 7 CFU', 'Avg 0.5μm', 'Avg 5.0μm']],
+          head: [['Lot Number', 'Samples', 'ISO 5 CFU', 'ISO 7 CFU', 'ISO 8 CFU', 'Avg 0.5μm', 'Avg 5.0μm']],
           body: viableByLot.map(r => [
-            r.lot_number, r.sample_count, r.iso5_total, r.iso7_total,
+            r.lot_number, r.sample_count, r.iso5_total, r.iso7_total, r.iso8_total ?? 0,
             Number(r.avg_05um).toFixed(1), Number(r.avg_50um).toFixed(1),
           ]),
           styles: { fontSize: 8 },
@@ -307,11 +347,11 @@ export default function DashboardPage() {
       doc.text('Records Detail', M, M + 8);
       autoTable(doc, {
         startY: M + 13,
-        head: [['Name', 'Lot #', 'Type', 'ISO', 'Hits', 'Date']],
+        head: [['Name', 'Lot #', 'Type', 'ISO', 'Hits', 'Date of Batch']],
         body: allRecords.map(r => [
           r.name, r.lot_number, r.personnel_type, r.iso_class,
           r.hit_details?.reduce((s, h) => s + (h.hit_value ?? 0), 0) ?? 0,
-          r.hit_date,
+          r.date_of_batch,
         ]),
         styles: { fontSize: 8 },
         headStyles: { fillColor: [99, 102, 241] },
@@ -359,28 +399,38 @@ export default function DashboardPage() {
 
       {/* Charts grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ChartCard id="chart-trends" title="Hits Over Time" icon={TrendingUp} className="col-span-1 lg:col-span-2">
-          {loading ? <Skeleton className="h-60" /> : <TrendsChart data={trends} onBarClick={handleTrendClick} />}
+        <ChartCard id="chart-trends" title="Hits Over Time (Avg/Batch)" icon={TrendingUp} className="col-span-1 lg:col-span-2">
+          {loading ? <Skeleton className="h-[280px]" /> : <TrendsChart data={trends} onBarClick={handleTrendClick} />}
         </ChartCard>
 
         {/* By Person */}
-        <ChartCard id="chart-person" title="Hits per Person" icon={Users}>
-          {loading ? <Skeleton className="h-60" /> : <PersonChart data={persons} onBarClick={handlePersonClick} />}
+        <ChartCard id="chart-person" title="Hits per Person" icon={Users} onClick={handleAllPersons}>
+          {loading ? <Skeleton className="h-[280px]" /> : <PersonChart data={persons} onBarClick={handlePersonClick} />}
+          {!loading && persons.length > 10 && (
+            <button onClick={() => setRankingDrawer('person')} className="btn-secondary btn-sm w-full mt-3">
+              View All {persons.length} Personnel
+            </button>
+          )}
         </ChartCard>
 
         {/* ISO Pie */}
         <ChartCard id="chart-iso" title="ISO Class Distribution" icon={Shield}>
-          {loading ? <Skeleton className="h-60" /> : <ISOPieChart data={isoData} onSliceClick={handleISOClick} />}
+          {loading ? <Skeleton className="h-[280px]" /> : <ISOPieChart data={isoData} onSliceClick={handleISOClick} />}
         </ChartCard>
 
         {/* By Location */}
-        <ChartCard id="chart-location" title="Hits per Location" icon={MapPin}>
-          {loading ? <Skeleton className="h-60" /> : <LocationChart data={locations} onBarClick={handleLocationClick} />}
+        <ChartCard id="chart-location" title="Hits per Location — ISO" icon={MapPin} onClick={handleAllLocations}>
+          {loading ? <Skeleton className="h-[280px]" /> : <LocationChart data={locations} onBarClick={handleLocationClick} />}
         </ChartCard>
 
         {/* By Lot */}
-        <ChartCard id="chart-lot" title="Hits per Lot Number" icon={Package}>
-          {loading ? <Skeleton className="h-60" /> : <LotChart data={lots} onBarClick={handleLotClick} />}
+        <ChartCard id="chart-lot" title="Hits per Lot Number" icon={Package} onClick={handleAllLots}>
+          {loading ? <Skeleton className="h-[280px]" /> : <LotChart data={lots} onBarClick={handleLotClick} />}
+          {!loading && lots.length > 10 && (
+            <button onClick={() => setRankingDrawer('lot')} className="btn-secondary btn-sm w-full mt-3">
+              View All {lots.length} Lots
+            </button>
+          )}
         </ChartCard>
 
         {/* Heatmap */}
@@ -390,12 +440,12 @@ export default function DashboardPage() {
 
         {/* Viable CFU by Lot */}
         <ChartCard id="chart-viable-cfu" title="Viable CFU by Lot" icon={Shield}>
-          {loading ? <Skeleton className="h-60" /> : <ViableCFUChart data={viableByLot} onBarClick={setViableLot} />}
+          {loading ? <Skeleton className="h-[280px]" /> : <ViableCFUChart data={viableByLot} onBarClick={setViableLot} />}
         </ChartCard>
 
         {/* Particle Count by Lot */}
         <ChartCard id="chart-particle" title="Particle Count by Lot" icon={Package}>
-          {loading ? <Skeleton className="h-60" /> : <ParticleCountChart data={viableByLot} onBarClick={setViableLot} />}
+          {loading ? <Skeleton className="h-[280px]" /> : <ParticleCountChart data={viableByLot} onBarClick={setViableLot} />}
         </ChartCard>
       </div>
 
@@ -408,6 +458,17 @@ export default function DashboardPage() {
         records={viableAll.filter(r => r.lot_number === viableLot)}
         onClose={() => setViableLot(null)}
       />
+
+      {/* Full ranking drawer */}
+      {rankingDrawer && (
+        <FullRankingDrawer
+          type={rankingDrawer}
+          data={rankingDrawer === 'person' ? persons : lots}
+          allRecords={allRecords}
+          onDrillDown={(d) => { setRankingDrawer(null); setDrawer(d); }}
+          onClose={() => setRankingDrawer(null)}
+        />
+      )}
     </div>
   );
 }

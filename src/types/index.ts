@@ -71,12 +71,30 @@ export interface ExcursionRecord {
   iso_class: ISOClass;
   alert_level: number;
   action_level: number;
-  hit_date: string;        // DATE the hit occurred (YYYY-MM-DD), user-entered
-  timestamp: string;       // when the record was created in the system
-  created_by: string;
-  hit_details: HitLocation[];
-  total_hits?: number;
-  user_name?: string;
+  date_of_batch: string;        // DATE the hit occurred (YYYY-MM-DD), user-entered
+  timestamp: string;       // Entry timestamp
+  created_by: string;      // User ID
+  user_name?: string;      // Joined user name
+  hit_details: HitLocation[];// Aggregated hit details array
+  total_hits: number;      // Computed total across all details
+  personnel_id?: string;   // Joined personnel profile ID
+  lot_id?: string;         // Joined lot profile ID
+  name_key?: string;
+  lot_number_key?: string;
+  // Soft-delete fields
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+  deletion_reason?: string | null;
+}
+
+export interface BatchTotal {
+  batch_id: string;
+  batch_number: string;
+  date_of_batch: string;
+  iso_class: string;
+  batch_hits: number;
+  personnel_record_count: number;
+  distinct_personnel_count: number;
 }
 
 export interface KPISummary {
@@ -96,10 +114,14 @@ export interface TrendData {
   iso5: number;
   iso7: number;
   records: number;
+  processed_batch_count?: number;
+  average_hits_per_batch?: number;
 }
 
 export interface PersonHits {
   name: string;
+  name_key?: string;
+  personnel_type?: string;
   hits: number;
   records: number;
   iso5: number;
@@ -108,20 +130,25 @@ export interface PersonHits {
 
 export interface LocationHits {
   location: string;
+  logical_location?: string;
+  iso_class?: string;
+  display_label?: string;
   hits: number;
   percentage: number;
+  raw_locations?: Array<{ location: string; hits: number }>;
 }
 
 export interface LotHits {
   lot_number: string;
+  lot_number_key?: string;
   hits: number;
-  records: number;
+  records?: number;
 }
 
 export interface FilterState {
   dateFrom: string;
   dateTo: string;
-  period: 'daily' | 'weekly' | 'monthly' | 'custom';
+  period: 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
   person: string;
   lotNumber: string;
   isoClass: string;
@@ -136,9 +163,10 @@ export interface AuthState {
 }
 
 export interface DrillDownData {
-  type: 'person' | 'lot' | 'location' | 'iso' | 'record';
+  type: 'person' | 'lot' | 'location' | 'iso' | 'record' | 'all';
   label: string;
   records: ExcursionRecord[];
+  filters?: Partial<FilterState>;
 }
 
 export const LOCATIONS = [
@@ -164,3 +192,35 @@ export const PERSONNEL_TYPE_LABELS: Record<PersonnelType, string> = {
   Filling:  'Filling / Stoppering',
   Crimping: 'Crimping / Helper',
 };
+
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+export type AuditActionType = 'CREATE' | 'UPDATE' | 'DELETE' | 'RESTORE';
+
+export interface AuditLog {
+  id: string;
+  action_type: AuditActionType;
+  entity_type: string;
+  entity_id: string;
+  actor_user_id: string | null;
+  actor_name: string;
+  actor_email: string;
+  actor_role: string;
+  occurred_at: string;
+  deletion_reason: string | null;
+  before_values: Record<string, unknown> | null;
+  after_values: Record<string, unknown> | null;
+  changed_fields: string[] | null;
+  personnel_name: string | null;
+  batch_number: string | null;
+  date_of_batch: string | null;
+}
+
+export interface AuditLogListItem extends Omit<AuditLog, 'before_values' | 'after_values'> {}
+
+export interface AuditLogsResponse {
+  logs: AuditLogListItem[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}

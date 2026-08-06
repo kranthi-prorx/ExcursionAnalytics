@@ -1,12 +1,13 @@
 import { format, subDays, subWeeks, subMonths, startOfDay, endOfDay } from 'date-fns';
 import type { FilterState } from '../types';
 
-export function getDefaultFilters(period: FilterState['period'] = 'monthly'): FilterState {
+export function getDefaultFilters(period: FilterState['period'] = 'yearly'): FilterState {
   const now = new Date();
   let dateFrom = '';
   if (period === 'daily')   dateFrom = format(startOfDay(now), 'yyyy-MM-dd');
   if (period === 'weekly')  dateFrom = format(subWeeks(now, 1), 'yyyy-MM-dd');
   if (period === 'monthly') dateFrom = format(subMonths(now, 1), 'yyyy-MM-dd');
+  if (period === 'yearly')  dateFrom = format(subMonths(now, 12), 'yyyy-MM-dd');
   return {
     dateFrom,
     dateTo: format(endOfDay(now), 'yyyy-MM-dd'),
@@ -38,7 +39,9 @@ export function hitColor(value: 0 | 1) {
 }
 
 export function isoColor(iso: string) {
-  return iso === 'ISO 5' ? '#22d3ee' : '#f59e0b';
+  if (iso === 'ISO 5') return '#22d3ee';
+  if (iso === 'ISO 8') return '#a855f7';
+  return '#f59e0b';
 }
 
 export function alertColor(level: string) {
@@ -75,10 +78,12 @@ export const CHART_COLORS = {
   primary:  '#6366f1',
   iso5:     '#22d3ee',
   iso7:     '#f59e0b',
+  iso8:     '#a855f7',
   success:  '#10b981',
   danger:   '#ef4444',
   warning:  '#f59e0b',
   purple:   '#a855f7',
   pink:     '#ec4899',
+  avgBatch: '#14b8a6',
   gradient: ['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f59e0b'],
 };

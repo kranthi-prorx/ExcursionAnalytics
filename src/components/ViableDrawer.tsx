@@ -16,6 +16,9 @@ function fmtDate(d: string) {
 export default function ViableDrawer({ lot, records, onClose }: Props) {
   const isOpen = !!lot;
 
+  // Determine which CFU types have data
+  const hasIso8 = records.some(r => (r.iso8_cfu ?? 0) > 0);
+
   return (
     <>
       {/* Backdrop */}
@@ -52,11 +55,12 @@ export default function ViableDrawer({ lot, records, onClose }: Props) {
 
         {/* Summary row */}
         {records.length > 0 && (
-          <div className="grid grid-cols-4 gap-2 px-5 py-3 border-b border-surface-100 dark:border-surface-800 bg-surface-50/50 dark:bg-surface-800/30">
+          <div className={`grid ${hasIso8 ? 'grid-cols-5' : 'grid-cols-4'} gap-2 px-5 py-3 border-b border-surface-100 dark:border-surface-800 bg-surface-50/50 dark:bg-surface-800/30`}>
             {[
               { label: 'Samples', value: records.length },
               { label: 'ISO 5 CFU', value: records.reduce((s, r) => s + (r.iso5_cfu ?? 0), 0) },
               { label: 'ISO 7 CFU', value: records.reduce((s, r) => s + (r.iso7_cfu ?? 0), 0) },
+              ...(hasIso8 ? [{ label: 'ISO 8 CFU', value: records.reduce((s, r) => s + (r.iso8_cfu ?? 0), 0) }] : []),
               { label: 'Avg 0.5μm', value: records.length ? (records.reduce((s, r) => s + Number(r.particle_05um ?? 0), 0) / records.length).toFixed(0) : '—' },
             ].map(({ label, value }) => (
               <div key={label} className="text-center">
@@ -93,16 +97,26 @@ export default function ViableDrawer({ lot, records, onClose }: Props) {
                   </div>
                 </div>
 
-                {/* CFU counts */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="rounded-lg bg-indigo-50 dark:bg-indigo-900/20 p-2.5 text-center">
-                    <p className="text-lg font-bold text-indigo-700 dark:text-indigo-300">{r.iso5_cfu}</p>
-                    <p className="text-[9px] text-indigo-500 uppercase tracking-wide">ISO 5 CFU</p>
-                  </div>
-                  <div className="rounded-lg bg-cyan-50 dark:bg-cyan-900/20 p-2.5 text-center">
-                    <p className="text-lg font-bold text-cyan-700 dark:text-cyan-300">{r.iso7_cfu}</p>
-                    <p className="text-[9px] text-cyan-500 uppercase tracking-wide">ISO 7 CFU</p>
-                  </div>
+                {/* CFU counts — only show the relevant ISO class CFU */}
+                <div className={`grid ${r.iso_class === 'ISO 5' ? 'grid-cols-1' : r.iso_class === 'ISO 7' ? 'grid-cols-1' : 'grid-cols-1'} gap-2`}>
+                  {r.iso_class === 'ISO 5' && (
+                    <div className="rounded-lg bg-indigo-50 dark:bg-indigo-900/20 p-2.5 text-center">
+                      <p className="text-lg font-bold text-indigo-700 dark:text-indigo-300">{r.iso5_cfu}</p>
+                      <p className="text-[9px] text-indigo-500 uppercase tracking-wide">ISO 5 CFU</p>
+                    </div>
+                  )}
+                  {r.iso_class === 'ISO 7' && (
+                    <div className="rounded-lg bg-cyan-50 dark:bg-cyan-900/20 p-2.5 text-center">
+                      <p className="text-lg font-bold text-cyan-700 dark:text-cyan-300">{r.iso7_cfu}</p>
+                      <p className="text-[9px] text-cyan-500 uppercase tracking-wide">ISO 7 CFU</p>
+                    </div>
+                  )}
+                  {r.iso_class === 'ISO 8' && (
+                    <div className="rounded-lg bg-purple-50 dark:bg-purple-900/20 p-2.5 text-center">
+                      <p className="text-lg font-bold text-purple-700 dark:text-purple-300">{r.iso8_cfu}</p>
+                      <p className="text-[9px] text-purple-500 uppercase tracking-wide">ISO 8 CFU</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Particle counts */}

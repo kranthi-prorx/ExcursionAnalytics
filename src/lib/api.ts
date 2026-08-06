@@ -1,7 +1,8 @@
 import axios from 'axios';
 import type {
   ExcursionRecord, KPISummary, TrendData, PersonHits,
-  LocationHits, LotHits, FilterState, User
+  LocationHits, LotHits, FilterState, User, BatchTotal,
+  AuditLog, AuditLogListItem, AuditLogsResponse,
 } from '../types';
 
 const api = axios.create({
@@ -62,8 +63,11 @@ export const recordsAPI = {
     api.post<ExcursionRecord>('/records', data),
   update: (id: string, data: Partial<ExcursionRecord>) =>
     api.put<ExcursionRecord>(`/records/${id}`, data),
-  delete: (id: string) =>
-    api.delete(`/records/${id}`),
+  // Soft-delete: reason is required (3-500 chars)
+  delete: (id: string, reason: string) =>
+    api.delete(`/records/${id}`, { data: { reason } }),
+  restore: (id: string) =>
+    api.post(`/records/${id}/restore`),
 };
 
 // ─── Analytics API ───────────────────────────────────────────────────────────
@@ -72,6 +76,8 @@ export const analyticsAPI = {
     api.get<KPISummary>('/analytics/kpi', { params: buildParams(filters ?? {}) }),
   trends: (filters?: Partial<FilterState>) =>
     api.get<TrendData[]>('/analytics/trends', { params: buildParams(filters ?? {}) }),
+  batchDistribution: (filters?: Partial<FilterState>) =>
+    api.get<BatchTotal[]>('/analytics/batch-distribution', { params: buildParams(filters ?? {}) }),
   trendsByLot: (filters?: Partial<FilterState>) =>
     api.get<{ date: string; lot_number: string; hits: number }[]>('/analytics/trends-by-lot', { params: buildParams(filters ?? {}) }),
   byPerson: (filters?: Partial<FilterState>) =>
@@ -84,6 +90,11 @@ export const analyticsAPI = {
     api.get<{ iso_class: string; hits: number }[]>('/analytics/by-iso', { params: buildParams(filters ?? {}) }),
   persons: () => api.get<string[]>('/analytics/persons'),
   lots: () => api.get<string[]>('/analytics/lots'),
+  drillDown: (params: {
+    type: string; key?: string; date_from?: string; date_to?: string; limit?: number; offset?: number;
+  }) => api.get<{ records: ExcursionRecord[]; total: number; limit: number; offset: number }>(
+    '/analytics/drill-down', { params }
+  ),
 };
 
 // ─── Users API ───────────────────────────────────────────────────────────────
@@ -99,18 +110,20 @@ export const usersAPI = {
 export interface ViableRecord {
   id: number; lot_number: string; sample_date: string; iso_class: string;
   room_number?: string;
-  iso5_cfu: number; iso7_cfu: number; particle_05um: number; particle_50um: number;
+  iso5_cfu: number; iso7_cfu: number; iso8_cfu: number;
+  particle_05um: number; particle_50um: number;
   deviation_number?: string; notes?: string; created_by_name?: string; created_at: string;
 }
 export interface ViableByLot {
-  lot_number: string; iso5_total: number; iso7_total: number;
+  lot_number: string; iso5_total: number; iso7_total: number; iso8_total: number;
   avg_05um: number; avg_50um: number; sample_count: number;
 }
 export const viableAPI = {
   getAll:   () => api.get<ViableRecord[]>('/viable'),
   getByLot: () => api.get<ViableByLot[]>('/viable/by-lot'),
   update:   (id: number, data: Partial<ViableRecord>) => api.put(`/viable/${id}`, data),
-  delete:   (id: number) => api.delete(`/viable/${id}`),
+  delete:   (id: number, reason: string) => api.delete(`/viable/${id}`, { data: { reason } }),
+  restore:  (id: number) => api.post(`/viable/${id}/restore`),
 };
 
 // ─── Surface Sampling API ─────────────────────────────────────────────────────
@@ -122,7 +135,58 @@ export interface SurfaceRecord {
 export const surfaceAPI = {
   getAll:  () => api.get<SurfaceRecord[]>('/surface'),
   update:  (id: number, data: Partial<SurfaceRecord>) => api.put(`/surface/${id}`, data),
-  delete:  (id: number) => api.delete(`/surface/${id}`),
+  delete:  (id: number, reason: string) => api.delete(`/surface/${id}`, { data: { reason } }),
+  restore: (id: number) => api.post(`/surface/${id}/restore`),
+};
+
+// ─── Processed Batches API ────────────────────────────────────────────────────
+export interface ProcessedBatch {
+  id: number; lot_number: string; lot_number_key: string; batch_date: string;
+  room_area?: string; notes?: string; created_by_name?: string; created_at: string;
+}
+export const processedBatchesAPI = {
+  getAll: () => api.get<ProcessedBatch[]>('/processed-batches'),
+  create: (data: { lot_number: string; batch_date: string; room_area?: string; notes?: string }) =>
+    api.post<ProcessedBatch>('/processed-batches', data),
+  delete: (id: number, reason: string) => api.delete(`/processed-batches/${id}`, { data: { reason } }),
+};
+
+// ─── Profiles API (Personnel & Lot master data) ──────────────────────────────
+export interface PersonnelProfile {
+  id: string; display_name: string; name_key: string;
+  personnel_type: string; is_active: boolean;
+  created_at: string; updated_at: string;
+}
+export interface LotProfile {
+  id: string; display_lot: string; lot_key: string;
+  created_at: string; updated_at: string;
+}
+export const profilesAPI = {
+  searchPersonnel: (q?: string) =>
+    api.get<PersonnelProfile[]>('/profiles/personnel', { params: q ? { q } : {} }),
+  createPersonnel: (data: { name: string; personnel_type: string }) =>
+    api.post<PersonnelProfile>('/profiles/personnel', data),
+  searchLots: (q?: string) =>
+    api.get<LotProfile[]>('/profiles/lots', { params: q ? { q } : {} }),
+  createLot: (data: { lot_number: string }) =>
+    api.post<LotProfile>('/profiles/lots', data),
+};
+
+// ─── Audit Logs API (admin only) ───────────────────────────────────────────────
+export const auditLogsAPI = {
+  getAll: (params?: {
+    page?: number;
+    limit?: number;
+    date_from?: string;
+    date_to?: string;
+    actor_user_id?: string;
+    action_type?: string;
+    entity_type?: string;
+    personnel_name?: string;
+    batch_number?: string;
+    sort?: string;
+  }) => api.get<AuditLogsResponse>('/audit-logs', { params }),
+  getById: (id: string) => api.get<AuditLog>(`/audit-logs/${id}`),
 };
 
 export default api;

@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { FilterState, TrendData, PersonHits, LocationHits, DrillDownData, ExcursionRecord } from '../types';
+import type { FilterState, TrendData, PersonHits, LocationHits, DrillDownData, ExcursionRecord, LotHits, BatchTotal } from '../types';
 import { analyticsAPI, recordsAPI, viableAPI } from '../lib/api';
 import { queryCache } from '../lib/queryCache';
 import type { ViableByLot, ViableRecord } from '../lib/api';
 import FilterBar from '../components/FilterBar';
-import { TrendsChart, PersonChart, LocationChart, ISOPieChart, HeatmapChart, LotChart, LotTrendsChart, ViableCFUChart, ParticleCountChart } from '../components/Charts';
+import { TrendsChart, PersonChart, LocationChart, ISOPieChart, HeatmapChart, LotChart, LotTrendsChart, ViableCFUChart, ParticleCountChart, BatchScatterChart } from '../components/Charts';
 import DrillDownDrawer from '../components/DrillDownDrawer';
 import ViableDrawer from '../components/ViableDrawer';
+import FullRankingDrawer from '../components/FullRankingDrawer';
 import { getDefaultFilters, downloadCSV } from '../lib/utils';
 import { Activity, TrendingUp, Users, MapPin, Shield, Package, Grid, Download, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -15,13 +16,18 @@ import autoTable from 'jspdf-autotable';
 import { toJpeg } from 'html-to-image';
 import { useAuth } from '../contexts/AuthContext';
 
-function ChartCard({ title, icon: Icon, children, subtitle, className, id }: {
+function ChartCard({ title, icon: Icon, children, subtitle, className, id, onClick }: {
   title: string; icon: React.ElementType; children: React.ReactNode; subtitle?: string; className?: string; id?: string;
+  onClick?: () => void;
 }) {
   return (
     <div id={id} className={`chart-container ${className ?? ''}`}>
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div
+          className={`flex items-center gap-2 ${onClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+          onClick={onClick}
+          title={onClick ? `Click to see all ${title.toLowerCase()} records` : undefined}
+        >
           <div className="w-7 h-7 rounded-lg bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center">
             <Icon size={14} className="text-brand-600 dark:text-brand-400" />
           </div>
@@ -30,24 +36,32 @@ function ChartCard({ title, icon: Icon, children, subtitle, className, id }: {
             {subtitle && <p className="text-xs text-surface-400 dark:text-surface-500">{subtitle}</p>}
           </div>
         </div>
+        {onClick && (
+          <span className="text-[10px] text-surface-400 dark:text-surface-500 font-medium shrink-0">
+            click title to drill-down
+          </span>
+        )}
       </div>
       {children}
     </div>
   );
 }
 
-function Skeleton() {
-  return <div className="animate-pulse bg-surface-100 dark:bg-surface-700 rounded-xl h-60" />;
+function Skeleton({ className }: { className?: string }) {
+  return <div className={`animate-pulse bg-surface-100 dark:bg-surface-700 rounded-xl h-[280px] ${className ?? ''}`} />;
 }
+
+
 
 export default function AnalyticsPage() {
   const { user } = useAuth();
   const canExport = user?.role === 'admin' || user?.role === 'manager';
-  const [filters, setFilters] = useState<FilterState>(getDefaultFilters('monthly'));
+  const [filters, setFilters] = useState<FilterState>(getDefaultFilters('yearly'));
   const [trends,    setTrends]    = useState<TrendData[]>([]);
+  const [scatter,   setScatter]   = useState<BatchTotal[]>([]);
   const [persons,   setPersons]   = useState<PersonHits[]>([]);
   const [locations, setLocations] = useState<LocationHits[]>([]);
-  const [lots,      setLots]      = useState<{ lot_number: string; hits: number }[]>([]);
+  const [lots,      setLots]      = useState<LotHits[]>([]);
   const [isoData,   setIsoData]   = useState<{ iso_class: string; hits: number }[]>([]);
   const [lotTrends, setLotTrends] = useState<{ date: string; lot_number: string; hits: number }[]>([]);
   const [viableByLot, setViableByLot] = useState<ViableByLot[]>([]);
@@ -56,19 +70,20 @@ export default function AnalyticsPage() {
   const [loading,   setLoading]   = useState(true);
   const [drawer,    setDrawer]    = useState<DrillDownData | null>(null);
   const [allRecords, setAllRecords] = useState<ExcursionRecord[]>([]);
+  const [rankingDrawer, setRankingDrawer] = useState<'person' | 'lot' | null>(null);
 
   const fetchAll = useCallback(async (force = false) => {
     const cacheKey = `analytics:${JSON.stringify(filters)}`;
     if (!force) {
       const cached = queryCache.get<{
-        trends: TrendData[]; persons: PersonHits[]; locations: LocationHits[];
+        trends: TrendData[]; scatter: BatchTotal[]; persons: PersonHits[]; locations: LocationHits[];
         lots: { lot_number: string; hits: number }[];
         isoData: { iso_class: string; hits: number }[];
         lotTrends: { date: string; lot_number: string; hits: number }[];
         allRecords: ExcursionRecord[]; viableByLot: ViableByLot[]; viableAll: ViableRecord[];
       }>(cacheKey);
       if (cached) {
-        setTrends(cached.trends); setPersons(cached.persons); setLocations(cached.locations);
+        setTrends(cached.trends); setScatter(cached.scatter); setPersons(cached.persons); setLocations(cached.locations);
         setLots(cached.lots); setIsoData(cached.isoData); setLotTrends(cached.lotTrends);
         setAllRecords(cached.allRecords); setViableByLot(cached.viableByLot); setViableAll(cached.viableAll);
         setLoading(false);
@@ -77,8 +92,9 @@ export default function AnalyticsPage() {
     }
     setLoading(true);
     try {
-      const [trendRes, personRes, locRes, lotRes, isoRes, lotTrendRes, recRes, viableRes, viableAllRes] = await Promise.allSettled([
+      const [trendRes, scatterRes, personRes, locRes, lotRes, isoRes, lotTrendRes, recRes, viableRes, viableAllRes] = await Promise.allSettled([
         analyticsAPI.trends(filters),
+        analyticsAPI.batchDistribution(filters),
         analyticsAPI.byPerson(filters),
         analyticsAPI.byLocation(filters),
         analyticsAPI.byLot(filters),
@@ -90,6 +106,7 @@ export default function AnalyticsPage() {
       ]);
       const next = {
         trends:     trendRes.status    === 'fulfilled' ? trendRes.value.data          : trends,
+        scatter:    scatterRes.status  === 'fulfilled' ? scatterRes.value.data        : scatter,
         persons:    personRes.status   === 'fulfilled' ? personRes.value.data         : persons,
         locations:  locRes.status      === 'fulfilled' ? locRes.value.data            : locations,
         lots:       lotRes.status      === 'fulfilled' ? lotRes.value.data            : lots,
@@ -99,7 +116,7 @@ export default function AnalyticsPage() {
         viableByLot: viableRes.status  === 'fulfilled' ? viableRes.value.data         : viableByLot,
         viableAll:  viableAllRes.status=== 'fulfilled' ? viableAllRes.value.data      : viableAll,
       };
-      setTrends(next.trends); setPersons(next.persons); setLocations(next.locations);
+      setTrends(next.trends); setScatter(next.scatter); setPersons(next.persons); setLocations(next.locations);
       setLots(next.lots); setIsoData(next.isoData); setLotTrends(next.lotTrends);
       setAllRecords(next.allRecords); setViableByLot(next.viableByLot); setViableAll(next.viableAll);
       queryCache.set(cacheKey, next);
@@ -112,6 +129,16 @@ export default function AnalyticsPage() {
   }, [filters]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Re-fetch (bypassing cache) when the user returns to this tab.
+  // This makes records created by other users visible without requiring a page reload.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') fetchAll(true);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [fetchAll]);
 
   const openDrawer = (type: DrillDownData['type'], label: string, recs: ExcursionRecord[]) =>
     setDrawer({ type, label, records: recs });
@@ -210,9 +237,9 @@ export default function AnalyticsPage() {
         doc.text('Viable & Non-Viable Summary by Lot', M, M + 8);
         autoTable(doc, {
           startY: M + 13,
-          head: [['Lot Number', 'Samples', 'ISO 5 CFU', 'ISO 7 CFU', 'Avg 0.5μm', 'Avg 5.0μm']],
+          head: [['Lot Number', 'Samples', 'ISO 5 CFU', 'ISO 7 CFU', 'ISO 8 CFU', 'Avg 0.5μm', 'Avg 5.0μm']],
           body: viableByLot.map(r => [
-            r.lot_number, r.sample_count, r.iso5_total, r.iso7_total,
+            r.lot_number, r.sample_count, r.iso5_total, r.iso7_total, r.iso8_total ?? 0,
             Number(r.avg_05um).toFixed(1), Number(r.avg_50um).toFixed(1),
           ]),
           styles: { fontSize: 8 },
@@ -292,14 +319,23 @@ export default function AnalyticsPage() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ChartCard id="achart-trends" title="Hits Over Time" icon={TrendingUp} subtitle="Click data points to drill down" className="col-span-1 lg:col-span-2">
-          {loading ? <Skeleton /> : <TrendsChart data={trends} onBarClick={d => {
-            const recs = allRecords.filter(r => r.hit_date === d.date);
+        <ChartCard id="chart-trends" title="Hits Over Time (Avg/Batch)" icon={TrendingUp} className="col-span-1 lg:col-span-2">
+          {loading ? <Skeleton className="h-[280px]" /> : <TrendsChart data={trends} onBarClick={d => {
+            const recs = allRecords.filter(r => r.date_of_batch === d.date);
             openDrawer('record', `📅 ${d.date}  —  ${d.hits} hit${d.hits !== 1 ? 's' : ''}`, recs);
           }} />}
         </ChartCard>
 
-        <ChartCard id="achart-person" title="Hits per Person" icon={Users} subtitle="Click bars to view person records">
+        {/* Scatter distribution */}
+        <ChartCard id="chart-scatter" title="Batch Hit Distribution by Date" icon={Grid} className="col-span-1 lg:col-span-2">
+          {loading ? <Skeleton className="h-[280px]" /> : <BatchScatterChart data={scatter} onPointClick={d => {
+            const recs = allRecords.filter(r => r.date_of_batch === d.date_of_batch && (r.lot_number_key || r.lot_number?.toLowerCase()?.trim() || '') === d.batch_id);
+            openDrawer('record', `📦 ${d.batch_number} on ${d.date_of_batch}`, recs);
+          }} />}
+        </ChartCard>
+
+        <ChartCard id="achart-person" title="Hits per Person" icon={Users} subtitle="Click bars to view person records"
+          onClick={() => openDrawer('all', '👥 All Personnel Hits', allRecords)}>
           {loading ? <Skeleton /> : (
             <PersonChart data={persons} onBarClick={d => openDrawer('person', d.name, allRecords.filter(r => r.name === d.name))} />
           )}
@@ -311,15 +347,32 @@ export default function AnalyticsPage() {
           )}
         </ChartCard>
 
-        <ChartCard id="achart-location" title="Hits per Location" icon={MapPin} subtitle="Click bars to view location records">
+        <ChartCard id="achart-location" title="Hits per Location — ISO" icon={MapPin} subtitle="Click bars to view location records"
+          onClick={() => openDrawer('all', '📍 All Location Hits', allRecords)}>
           {loading ? <Skeleton /> : (
-            <LocationChart data={locations} onBarClick={d => openDrawer('location', d.location, allRecords.filter(r => r.hit_details?.some(h => h.location === d.location && (h.hit_value ?? 0) > 0)))} />
+            <LocationChart data={locations} onBarClick={d => {
+              const displayLabel = d.display_label || d.location;
+              const recs = allRecords.filter(r =>
+                r.hit_details?.some(h => {
+                  const rawMatch = h.location === d.location;
+                  const logicalMatch = d.raw_locations?.some(rl => h.location === rl.location);
+                  return (rawMatch || logicalMatch) && (h.hit_value ?? 0) > 0;
+                })
+              );
+              openDrawer('location', displayLabel, recs);
+            }} />
           )}
         </ChartCard>
 
-        <ChartCard id="achart-lot" title="Hits per Lot Number" icon={Package}>
+        <ChartCard id="achart-lot" title="Hits per Lot Number" icon={Package}
+          onClick={() => openDrawer('all', '📦 All Lot Hits', allRecords)}>
           {loading ? <Skeleton /> : (
-            <LotChart data={lots} onBarClick={lot => openDrawer('lot', lot, allRecords.filter(r => r.lot_number === lot))} />
+            <LotChart data={lots} onBarClick={lot => {
+              const normLot = lot.trim().replace(/\s+/g, ' ').toLowerCase();
+              openDrawer('lot', lot, allRecords.filter(r =>
+                r.lot_number.trim().replace(/\s+/g, ' ').toLowerCase() === normLot
+              ));
+            }} />
           )}
         </ChartCard>
 
@@ -329,7 +382,7 @@ export default function AnalyticsPage() {
           )}
         </ChartCard>
 
-        <ChartCard id="achart-viable-cfu" title="Viable CFU by Lot" icon={Shield} subtitle="ISO 5 and ISO 7 colony counts per lot">
+        <ChartCard id="achart-viable-cfu" title="Viable CFU by Lot" icon={Shield} subtitle="ISO 5, ISO 7, and ISO 8 colony counts per lot">
           {loading ? <Skeleton /> : <ViableCFUChart data={viableByLot} onBarClick={setViableLot} />}
         </ChartCard>
 
@@ -341,7 +394,14 @@ export default function AnalyticsPage() {
       {/* Top performers table */}
       {!loading && persons.length > 0 && (
         <div className="card p-5">
-          <h3 className="chart-title mb-4 flex items-center gap-2"><Users size={16} className="text-brand-500" />Top Personnel by Hit Count</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="chart-title flex items-center gap-2"><Users size={16} className="text-brand-500" />Top Personnel by Hit Count</h3>
+            {persons.length > 10 && (
+              <button onClick={() => setRankingDrawer('person')} className="btn-secondary btn-sm">
+                View All {persons.length} Personnel
+              </button>
+            )}
+          </div>
           <div className="overflow-x-auto scrollbar-thin">
             <table className="table-base">
               <thead>
@@ -350,7 +410,7 @@ export default function AnalyticsPage() {
                 </tr>
               </thead>
               <tbody>
-                {[...persons].sort((a, b) => b.hits - a.hits).slice(0, 10).map((p, i) => (
+                {[...persons].sort((a, b) => b.hits - a.hits).slice(0, 20).map((p, i) => (
                   <tr key={p.name} onClick={() => openDrawer('person', p.name, allRecords.filter(r => r.name === p.name))} className="cursor-pointer">
                     <td className="font-mono font-bold text-surface-400">#{i + 1}</td>
                     <td className="font-semibold text-surface-800 dark:text-surface-200">{p.name}</td>
@@ -366,6 +426,11 @@ export default function AnalyticsPage() {
               </tbody>
             </table>
           </div>
+          {persons.length > 20 && (
+            <button onClick={() => setRankingDrawer('person')} className="btn-secondary btn-sm w-full mt-3">
+              View All {persons.length} Personnel
+            </button>
+          )}
         </div>
       )}
 
@@ -376,6 +441,17 @@ export default function AnalyticsPage() {
         records={viableAll.filter(r => r.lot_number === viableLot)}
         onClose={() => setViableLot(null)}
       />
+
+      {/* Full ranking drawer */}
+      {rankingDrawer && (
+        <FullRankingDrawer
+          type={rankingDrawer}
+          data={rankingDrawer === 'person' ? persons : lots}
+          allRecords={allRecords}
+          onDrillDown={(d) => { setRankingDrawer(null); setDrawer(d); }}
+          onClose={() => setRankingDrawer(null)}
+        />
+      )}
     </div>
   );
 }

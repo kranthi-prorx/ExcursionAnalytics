@@ -22,7 +22,10 @@ app.use('/api/records',   require('./routes/records'));
 app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/users',     require('./routes/users'));
 app.use('/api/viable',    require('./routes/viable'));
-app.use('/api/surface',   require('./routes/surface'));
+app.use('/api/surface',            require('./routes/surface'));
+app.use('/api/processed-batches',  require('./routes/processed-batches'));
+app.use('/api/profiles',           require('./routes/profiles'));
+app.use('/api/audit-logs',         require('./routes/audit-logs'));
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', ts: new Date() }));
 
@@ -32,6 +35,17 @@ app.use((err, _req, res, _next) => {
   res.status(err.status || 500).json({ message: err.message || 'Internal server error' });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 EHA Backend running on http://localhost:${PORT}`);
-});
+// Wait for DB migrations to complete before accepting connections
+const pool = require('./db');
+pool.migrationReady
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`🚀 EHA Backend running on http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error('[server] Failed to complete DB migrations, starting anyway:', err.message);
+    app.listen(PORT, () => {
+      console.log(`🚀 EHA Backend running on http://localhost:${PORT} (migrations may be incomplete)`);
+    });
+  });

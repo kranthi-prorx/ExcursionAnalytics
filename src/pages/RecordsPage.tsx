@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { ExcursionRecord, FilterState, DrillDownData } from '../types';
 import { recordsAPI, viableAPI, surfaceAPI } from '../lib/api';
+import { queryCache } from '../lib/queryCache';
 import type { ViableRecord, SurfaceRecord } from '../lib/api';
 import FilterBar from '../components/FilterBar';
 import DrillDownDrawer from '../components/DrillDownDrawer';
@@ -8,33 +9,30 @@ import ViableDrawer from '../components/ViableDrawer';
 import { getDefaultFilters, formatDate, clsx, downloadCSV } from '../lib/utils';
 import { Eye, Trash2, Download, Search, SortAsc, SortDesc, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import EditRecordModal from '../components/EditRecordModal';
+import DeleteConfirmModal from '../components/DeleteConfirmModal';
+import type { DeleteSummary } from '../components/DeleteConfirmModal';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import {
+  type ViableISOClass, evaluateCfuStatus,
+  PARTICLE_THRESHOLDS as CFG_PARTICLE_THRESHOLDS,
+} from '../lib/cfuConfig';
 
 const PAGE_SIZE = 15;
 type RecordTab = 'pm' | 'viable' | 'surface';
 
-// CFU alert / action thresholds (mirrors ViableDataEntryPage)
-const CFU5 = { alert: Infinity, action: 1  }; // ISO 5: N/A alert, action ≥ 1
-const CFU7 = { alert: 5,        action: 10 }; // ISO 7: alert ≥ 5, action ≥ 10
+// CFU thresholds — uses centralized cfuConfig for ISO 5/7/8
+// Local alias for the particle thresholds (keyed as Record<string, ...> for table lookups)
+const PARTICLE_THRESHOLDS: Record<string, { um05: { alert: number; action: number }; um50: { alert: number; action: number } }> = CFG_PARTICLE_THRESHOLDS;
 
-// Particle count thresholds per ISO class (mirrors ViableDataEntryPage)
-const PARTICLE_THRESHOLDS: Record<string, { um05: { alert: number; action: number }; um50: { alert: number; action: number } }> = {
-  'ISO 5': { um05: { alert: 3_000,     action: 3_520     }, um50: { alert: 20,     action: 29      } },
-  'ISO 7': { um05: { alert: 300_000,   action: 352_000   }, um50: { alert: 2_000,  action: 2_930   } },
-  'ISO 8': { um05: { alert: 3_000_000, action: 3_520_000 }, um50: { alert: 20_000, action: 29_300  } },
-};
-
-function cfuStatus(val: number, t: { alert: number; action: number }) {
-  if (val >= t.action) return 'action';
-  if (val >= t.alert)  return 'alert';
-  return 'ok';
+function cfuStatus(val: number, isoClass: string) {
+  return evaluateCfuStatus(val, isoClass as ViableISOClass);
 }
 
-function CfuBadge({ val, t }: { val: number; t: { alert: number; action: number } }) {
-  const s = cfuStatus(val, t);
+function CfuBadge({ val, isoClass }: { val: number; isoClass: string }) {
+  const s = cfuStatus(val, isoClass);
   if (s === 'action') return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400">
       ⚠ {val} Action
@@ -75,13 +73,13 @@ function fmtHitDate(d: string | null | undefined): string {
 export default function RecordsPage() {
   const { user } = useAuth();
   const [tab, setTab] = useState<RecordTab>('pm');
-  const [filters, setFilters] = useState<FilterState>(getDefaultFilters('monthly'));
+  const [filters, setFilters] = useState<FilterState>(getDefaultFilters('yearly'));
   const [records, setRecords] = useState<ExcursionRecord[]>([]);
   const [total, setTotal]     = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch]   = useState('');
   const [page, setPage]       = useState(1);
-  const [sortBy, setSortBy]   = useState<'hit_date' | 'name' | 'total_hits'>('hit_date');
+  const [sortBy, setSortBy]   = useState<'date_of_batch' | 'name' | 'total_hits'>('date_of_batch');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [drawer, setDrawer]   = useState<DrillDownData | null>(null);
   const [deleting, setDeleting]           = useState<string | null>(null);
@@ -97,9 +95,32 @@ export default function RecordsPage() {
     | { type: 'surface'; record: SurfaceRecord   }
     | null
   >(null);
+  // Delete confirmation modal state
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    type: 'pm' | 'viable' | 'surface';
+    id: string | number;
+    recordType: string;
+    summary: DeleteSummary;
+  } | null>(null);
 
-  const canDelete = user?.role === 'admin' || user?.role === 'manager';
-  const canExport = user?.role === 'admin' || user?.role === 'manager';
+  // ── Bulk-selection state (one Set per tab) ──────────────────────────
+  const [selectedPm,      setSelectedPm]      = useState<Set<string>>(new Set());
+  const [selectedViable,  setSelectedViable]  = useState<Set<number>>(new Set());
+  const [selectedSurface, setSelectedSurface] = useState<Set<number>>(new Set());
+  const [bulkDeleteOpen,  setBulkDeleteOpen]  = useState(false);
+  const [bulkDeleting,    setBulkDeleting]    = useState(false);
+
+  // Clear selections when switching tabs
+  const handleTabChange = (t: RecordTab) => {
+    setTab(t);
+    setSelectedPm(new Set());
+    setSelectedViable(new Set());
+    setSelectedSurface(new Set());
+  };
+
+  const canDelete = ['admin', 'manager'].includes((user?.role ?? '').toLowerCase());
+  const canExport = ['admin', 'manager'].includes((user?.role ?? '').toLowerCase());
 
   const fetchRecords = useCallback(async () => {
     setLoading(true);
@@ -131,40 +152,119 @@ export default function RecordsPage() {
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
   useEffect(() => { fetchSubRecords(); }, [fetchSubRecords]);
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete this record permanently?')) return;
-    setDeleting(id);
+  // Open delete confirmation modal for PM records
+  const openDeletePm = (rec: ExcursionRecord) => {
+    setDeleteModal({
+      isOpen: true, type: 'pm', id: rec.id,
+      recordType: 'PM Monitoring',
+      summary: {
+        person: rec.name,
+        batch: rec.lot_number,
+        date: rec.date_of_batch,
+        totalHits: rec.total_hits,
+        isoClass: rec.iso_class,
+      },
+    });
+  };
+
+  // Open delete confirmation modal for viable records
+  const openDeleteViable = (rec: ViableRecord) => {
+    setDeleteModal({
+      isOpen: true, type: 'viable', id: rec.id,
+      recordType: 'Environmental/Viable',
+      summary: {
+        batch: rec.lot_number,
+        date: rec.sample_date,
+        isoClass: rec.iso_class,
+      },
+    });
+  };
+
+  // Open delete confirmation modal for surface records
+  const openDeleteSurface = (rec: SurfaceRecord) => {
+    setDeleteModal({
+      isOpen: true, type: 'surface', id: rec.id,
+      recordType: 'Surface Sampling',
+      summary: {
+        location: rec.sample_location,
+        batch: rec.lot_number,
+        date: rec.sample_date,
+        isoClass: rec.iso_class,
+      },
+    });
+  };
+
+  // Unified delete confirm handler (single record)
+  const handleDeleteConfirm = async (reason: string) => {
+    if (!deleteModal) return;
+    const { type, id } = deleteModal;
     try {
-      await recordsAPI.delete(id);
-      setRecords(r => r.filter(rec => rec.id !== id));
-      toast.success('Record deleted');
-    } catch {
-      toast.error('Failed to delete record');
-    } finally {
-      setDeleting(null);
+      if (type === 'pm') {
+        await recordsAPI.delete(String(id), reason);
+        setRecords(r => r.filter(rec => rec.id !== String(id)));
+        setSelectedPm(s => { const n = new Set(s); n.delete(String(id)); return n; });
+        toast.success('Record deleted');
+      } else if (type === 'viable') {
+        await viableAPI.delete(Number(id), reason);
+        setViableRecords(r => r.filter(rec => rec.id !== Number(id)));
+        setSelectedViable(s => { const n = new Set(s); n.delete(Number(id)); return n; });
+        toast.success('Viable record deleted');
+      } else if (type === 'surface') {
+        await surfaceAPI.delete(Number(id), reason);
+        setSurfaceRecords(r => r.filter(rec => rec.id !== Number(id)));
+        setSelectedSurface(s => { const n = new Set(s); n.delete(Number(id)); return n; });
+        toast.success('Surface record deleted');
+      }
+      queryCache.invalidate('dashboard:');
+      queryCache.invalidate('analytics:');
+      queryCache.invalidate('audit-logs:');
+      setDeleteModal(null);
+    } catch (err: any) {
+      throw err;
     }
   };
 
-  const handleDeleteViable = async (id: number) => {
-    if (!confirm('Delete this viable record permanently?')) return;
-    setDeletingViable(id);
+  // ── Bulk-delete: sequentially delete all selected records ─────────
+  const handleBulkDeleteConfirm = async (reason: string) => {
+    setBulkDeleting(true);
+    let failed = 0;
     try {
-      await viableAPI.delete(id);
-      setViableRecords(r => r.filter(rec => rec.id !== id));
-      toast.success('Viable record deleted');
-    } catch { toast.error('Failed to delete record'); }
-    finally { setDeletingViable(null); }
-  };
-
-  const handleDeleteSurface = async (id: number) => {
-    if (!confirm('Delete this surface record permanently?')) return;
-    setDeletingSurface(id);
-    try {
-      await surfaceAPI.delete(id);
-      setSurfaceRecords(r => r.filter(rec => rec.id !== id));
-      toast.success('Surface record deleted');
-    } catch { toast.error('Failed to delete record'); }
-    finally { setDeletingSurface(null); }
+      if (tab === 'pm') {
+        const ids = [...selectedPm];
+        for (const id of ids) {
+          try { await recordsAPI.delete(id, reason); }
+          catch { failed++; }
+        }
+        setRecords(r => r.filter(rec => !selectedPm.has(rec.id)));
+        setSelectedPm(new Set());
+      } else if (tab === 'viable') {
+        const ids = [...selectedViable];
+        for (const id of ids) {
+          try { await viableAPI.delete(id, reason); }
+          catch { failed++; }
+        }
+        setViableRecords(r => r.filter(rec => !selectedViable.has(rec.id)));
+        setSelectedViable(new Set());
+      } else if (tab === 'surface') {
+        const ids = [...selectedSurface];
+        for (const id of ids) {
+          try { await surfaceAPI.delete(id, reason); }
+          catch { failed++; }
+        }
+        setSurfaceRecords(r => r.filter(rec => !selectedSurface.has(rec.id)));
+        setSelectedSurface(new Set());
+      }
+      queryCache.invalidate('dashboard:');
+      queryCache.invalidate('analytics:');
+      queryCache.invalidate('audit-logs:');
+      if (failed > 0) toast.error(`${failed} record(s) could not be deleted.`);
+      else toast.success('Selected records deleted.');
+      setBulkDeleteOpen(false);
+    } catch {
+      throw new Error('Bulk delete failed. Please try again.');
+    } finally {
+      setBulkDeleting(false);
+    }
   };
 
   const openDrawer = (rec: ExcursionRecord) => {
@@ -186,7 +286,7 @@ export default function RecordsPage() {
     })
     .sort((a, b) => {
       let av: string | number, bv: string | number;
-      if (sortBy === 'hit_date') { av = a.hit_date ?? ''; bv = b.hit_date ?? ''; }
+      if (sortBy === 'date_of_batch') { av = a.date_of_batch ?? ''; bv = b.date_of_batch ?? ''; }
       else if (sortBy === 'name') { av = a.name; bv = b.name; }
       else { av = a.total_hits ?? 0; bv = b.total_hits ?? 0; }
       return sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
@@ -232,9 +332,9 @@ export default function RecordsPage() {
     // PM Excursion
     if (!filtered.length) return;
     const flat = filtered.map(r => ({
-      Name: r.name, LotNumber: r.lot_number, HitDate: fmtHitDate(r.hit_date),
+      Name: r.name, LotNumber: r.lot_number, DateOfBatch: fmtHitDate(r.date_of_batch),
       JobFunction: r.job_function, PersonnelType: r.personnel_type,
-      ISOClass: r.personnel_type === 'Filling' ? 'ISO 5 & 7' : r.iso_class, AlertLevel: r.alert_level, ActionLevel: r.action_level,
+      ISOClass: r.iso_class, AlertLevel: r.alert_level, ActionLevel: r.action_level,
       TotalHits: Number(r.total_hits ?? 0), RecordedAt: r.timestamp,
     }));
     downloadCSV(flat as any, `records-${Date.now()}.csv`);
@@ -288,17 +388,18 @@ export default function RecordsPage() {
     // PM Excursion
     doc.setFontSize(14); doc.setTextColor(40, 40, 40);
     doc.text('PM Excursion Records', M, 18);
-    (doc as any).autoTable({
+    autoTable(doc, {
         startY: M + 20,
-        head: [['Name', 'Lot', 'Hit Date', 'Type', 'ISO Class', 'Hits', 'Recorded', 'Entered By']],
+        head: [['Name', 'Lot', 'Date of Batch', 'Type', 'ISO Class', 'Hits', 'Recorded', 'Entered By']],
         body: filtered.map(r => [
-          r.name, r.lot_number, fmtHitDate(r.hit_date),
+          r.name, r.lot_number, fmtHitDate(r.date_of_batch),
           r.personnel_type,
-          r.personnel_type === 'Filling' ? 'ISO 5 / 7' : r.iso_class,
+          r.iso_class,
           r.total_hits?.toString() ?? '0',
           new Date(r.timestamp).toLocaleString(),
           (r as any).created_by_name || '—'
-        ]),headStyles: { fillColor: [99, 102, 241] },
+        ]),
+        headStyles: { fillColor: [99, 102, 241] },
     });
     doc.save(`records-${Date.now()}.pdf`);
     toast.success('PDF exported!');
@@ -325,12 +426,43 @@ export default function RecordsPage() {
       {/* Tabs */}
       <div className="flex gap-1 p-1 bg-surface-100 dark:bg-surface-800 rounded-xl w-fit">
         {([['pm','PM Excursion'],['viable','Viable & Non-Viable'],['surface','Surface Sampling']] as [RecordTab,string][]).map(([t,label]) => (
-          <button key={t} onClick={() => setTab(t)} className={clsx(
+          <button key={t} onClick={() => handleTabChange(t as RecordTab)} className={clsx(
             'px-4 py-1.5 rounded-lg text-xs font-semibold transition-all',
             tab === t ? 'bg-white dark:bg-surface-700 shadow text-surface-900 dark:text-white' : 'text-surface-500 hover:text-surface-700 dark:hover:text-surface-300'
           )}>{label}</button>
         ))}
       </div>
+
+      {/* ── Bulk Action Bar ──────────────────────────────────────────── */}
+      {canDelete && (() => {
+        const selCount = tab === 'pm' ? selectedPm.size : tab === 'viable' ? selectedViable.size : selectedSurface.size;
+        if (selCount === 0) return null;
+        return (
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 animate-fade-in">
+            <span className="text-sm font-semibold text-red-700 dark:text-red-400">
+              {selCount} record{selCount !== 1 ? 's' : ''} selected
+            </span>
+            <div className="flex-1" />
+            <button
+              onClick={() => {
+                if (tab === 'pm') setSelectedPm(new Set());
+                else if (tab === 'viable') setSelectedViable(new Set());
+                else setSelectedSurface(new Set());
+              }}
+              className="text-xs text-surface-500 hover:text-surface-700 dark:hover:text-surface-300 transition-colors"
+            >
+              Clear selection
+            </button>
+            <button
+              onClick={() => setBulkDeleteOpen(true)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-semibold transition-colors"
+            >
+              <Trash2 size={13} /> Delete {selCount} record{selCount !== 1 ? 's' : ''}
+            </button>
+          </div>
+        );
+      })()}
+
 
       {tab === 'pm' && (
         <>
@@ -346,9 +478,24 @@ export default function RecordsPage() {
             <div className="overflow-x-auto scrollbar-thin">
               <table className="table-base min-w-[700px]">
                 <thead><tr>
+                  {canDelete && (
+                    <th className="w-10" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        aria-label="Select all records on this page"
+                        checked={paged.length > 0 && paged.every(r => selectedPm.has(r.id))}
+                        ref={el => { if (el) el.indeterminate = paged.some(r => selectedPm.has(r.id)) && !paged.every(r => selectedPm.has(r.id)); }}
+                        onChange={e => {
+                          if (e.target.checked) setSelectedPm(s => new Set([...s, ...paged.map(r => r.id)]));
+                          else setSelectedPm(s => { const n = new Set(s); paged.forEach(r => n.delete(r.id)); return n; });
+                        }}
+                        className="w-4 h-4 rounded accent-brand-600 cursor-pointer"
+                      />
+                    </th>
+                  )}
                   <th onClick={() => toggleSort('name')} className="cursor-pointer hover:text-surface-700 dark:hover:text-surface-200"><div className="flex items-center gap-1">Name <SortIcon field="name" /></div></th>
                   <th>Lot Number</th>
-                  <th onClick={() => toggleSort('hit_date')} className="cursor-pointer hover:text-surface-700 dark:hover:text-surface-200"><div className="flex items-center gap-1">Hit Date <SortIcon field="hit_date" /></div></th>
+                  <th onClick={() => toggleSort('date_of_batch')} className="cursor-pointer hover:text-surface-700 dark:hover:text-surface-200"><div className="flex items-center gap-1">Date of Batch <SortIcon field="date_of_batch" /></div></th>
                   <th>Type</th><th>ISO Class</th>
                   <th onClick={() => toggleSort('total_hits')} className="cursor-pointer hover:text-surface-700 dark:hover:text-surface-200"><div className="flex items-center gap-1">Hits <SortIcon field="total_hits" /></div></th>
                   <th>Entered By</th>
@@ -356,27 +503,40 @@ export default function RecordsPage() {
                 </tr></thead>
                 <tbody>
                   {loading ? Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i}>{Array.from({ length: 7 }).map((_, j) => <td key={j}><div className="h-4 bg-surface-100 dark:bg-surface-700 rounded animate-pulse" /></td>)}</tr>
+                    <tr key={i}>{Array.from({ length: canDelete ? 9 : 8 }).map((_, j) => <td key={j}><div className="h-4 bg-surface-100 dark:bg-surface-700 rounded animate-pulse" /></td>)}</tr>
                   )) : paged.length === 0 ? (
-                    <tr><td colSpan={8} className="text-center py-12 text-surface-400">No records found</td></tr>
+                    <tr><td colSpan={canDelete ? 9 : 8} className="text-center py-12 text-surface-400">No records found</td></tr>
                   ) : paged.map(rec => {
                     const hits = Number(rec.total_hits ?? rec.hit_details?.reduce((s, h) => s + (h.hit_value ?? 0), 0) ?? 0);
+                    const isSelected = selectedPm.has(rec.id);
                     return (
-                      <tr key={rec.id} className="cursor-pointer" onClick={() => openDrawer(rec)}>
+                      <tr
+                        key={rec.id}
+                        className={clsx('cursor-pointer transition-colors', isSelected ? 'bg-red-50/60 dark:bg-red-900/10' : '')}
+                        onClick={() => openDrawer(rec)}
+                      >
+                        {canDelete && (
+                          <td onClick={e => e.stopPropagation()} className="w-10">
+                            <input
+                              type="checkbox"
+                              aria-label={`Select record for ${rec.name}`}
+                              checked={isSelected}
+                              onChange={e => {
+                                setSelectedPm(s => {
+                                  const n = new Set(s);
+                                  e.target.checked ? n.add(rec.id) : n.delete(rec.id);
+                                  return n;
+                                });
+                              }}
+                              className="w-4 h-4 rounded accent-brand-600 cursor-pointer"
+                            />
+                          </td>
+                        )}
                         <td className="font-semibold text-surface-800 dark:text-surface-200">{rec.name}</td>
                         <td className="font-mono text-xs">{rec.lot_number}</td>
-                        <td className="text-xs font-medium text-surface-600 dark:text-surface-400">{fmtHitDate(rec.hit_date)}</td>
+                        <td className="text-xs font-medium text-surface-600 dark:text-surface-400">{fmtHitDate(rec.date_of_batch)}</td>
                         <td><span className="badge bg-surface-100 dark:bg-surface-700 text-surface-600 dark:text-surface-400">{rec.personnel_type}</span></td>
-                        <td>
-                          {rec.personnel_type === 'Filling' ? (
-                            <div className="flex items-center gap-1">
-                              <span className="badge-iso5">ISO 5</span>
-                              <span className="badge-iso7">ISO 7</span>
-                            </div>
-                          ) : (
-                            <span className={rec.iso_class === 'ISO 5' ? 'badge-iso5' : 'badge-iso7'}>{rec.iso_class}</span>
-                          )}
-                        </td>
+                        <td><span className={rec.iso_class === 'ISO 5' ? 'badge-iso5' : 'badge-iso7'}>{rec.iso_class}</span></td>
                         <td><span className={clsx('badge', hits > 0 ? 'badge-hit' : 'badge-no-hit')}>{hits}</span></td>
                         <td className="text-xs text-surface-500 dark:text-surface-400">{(rec as any).created_by_name || '—'}</td>
                         <td onClick={e => e.stopPropagation()}>
@@ -385,9 +545,11 @@ export default function RecordsPage() {
                             {canDelete && (
                               <>
                                 <button onClick={() => setEditTarget({ type: 'pm', record: rec })} className="btn-ghost p-1.5 text-brand-500 hover:bg-brand-50 dark:hover:bg-brand-900/20" title="Edit"><Pencil size={14} /></button>
-                                <button onClick={() => handleDelete(rec.id)} disabled={deleting === rec.id}
+                                <button
+                                  onClick={() => openDeletePm(rec)}
+                                  aria-label={`Delete PM record for ${rec.name}`}
                                   className="btn-ghost p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20" title="Delete">
-                                  {deleting === rec.id ? <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> : <Trash2 size={14} />}
+                                  <Trash2 size={14} />
                                 </button>
                               </>
                             )}
@@ -420,8 +582,23 @@ export default function RecordsPage() {
           <div className="overflow-x-auto scrollbar-thin">
             <table className="table-base min-w-[700px]">
               <thead><tr>
+                {canDelete && (
+                  <th className="w-10" onClick={e => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      aria-label="Select all viable records"
+                      checked={viableRecords.length > 0 && viableRecords.every(r => selectedViable.has(r.id))}
+                      ref={el => { if (el) el.indeterminate = viableRecords.some(r => selectedViable.has(r.id)) && !viableRecords.every(r => selectedViable.has(r.id)); }}
+                      onChange={e => {
+                        if (e.target.checked) setSelectedViable(new Set(viableRecords.map(r => r.id)));
+                        else setSelectedViable(new Set());
+                      }}
+                      className="w-4 h-4 rounded accent-brand-600 cursor-pointer"
+                    />
+                  </th>
+                )}
                 <th>Lot Number</th><th>Sample Date</th><th>ISO Class</th><th>Room</th>
-                <th>ISO 5 CFU</th><th>ISO 7 CFU</th>
+                <th>CFU</th>
                 <th>0.5 μm (p/m³)</th><th>5.0 μm (p/m³)</th>
                 <th>Deviation #</th><th>Entered By</th>
                 <th>Actions</th>
@@ -430,23 +607,36 @@ export default function RecordsPage() {
                 {subLoading ? Array.from({length:6}).map((_,i)=>(
                   <tr key={i}>{Array.from({length:10}).map((_,j)=><td key={j}><div className="h-4 bg-surface-100 dark:bg-surface-700 rounded animate-pulse"/></td>)}</tr>
                 )) : viableRecords.length === 0 ? (
-                  <tr><td colSpan={11} className="text-center py-12 text-surface-400">No viable records yet</td></tr>
+                  <tr><td colSpan={10} className="text-center py-12 text-surface-400">No viable records yet</td></tr>
                 ) : viableRecords.map(r => {
-                  const s5 = cfuStatus(r.iso5_cfu, CFU5);
-                  const s7 = cfuStatus(r.iso7_cfu, CFU7);
-                  const rowStatus = s5 === 'action' || s7 === 'action' ? 'action'
-                                  : s5 === 'alert'  || s7 === 'alert'  ? 'alert' : 'ok';
+                  const activeCfu = r.iso_class === 'ISO 5' ? r.iso5_cfu
+                                  : r.iso_class === 'ISO 8' ? (r.iso8_cfu ?? 0)
+                                  : r.iso7_cfu;
+                  const cfuSt = evaluateCfuStatus(activeCfu, r.iso_class as ViableISOClass);
+                  const rowStatus = cfuSt;
+                  const isViableSelected = selectedViable.has(r.id);
                   return (
                   <tr key={r.id} className={clsx(
+                    isViableSelected ? 'bg-red-50/60 dark:bg-red-900/10' :
                     rowStatus === 'action' ? 'bg-red-50/60 dark:bg-red-900/10' :
                     rowStatus === 'alert'  ? 'bg-amber-50/60 dark:bg-amber-900/10' : ''
                   )}>
+                    {canDelete && (
+                      <td onClick={e => e.stopPropagation()} className="w-10">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select viable record for lot ${r.lot_number}`}
+                          checked={isViableSelected}
+                          onChange={e => { setSelectedViable(s => { const n = new Set(s); e.target.checked ? n.add(r.id) : n.delete(r.id); return n; }); }}
+                          className="w-4 h-4 rounded accent-brand-600 cursor-pointer"
+                        />
+                      </td>
+                    )}
                     <td className="font-mono text-xs">{r.lot_number}</td>
                     <td className="text-xs">{fmtHitDate(r.sample_date)}</td>
                     <td><span className={r.iso_class === 'ISO 5' ? 'badge-iso5' : 'badge-iso7'}>{r.iso_class}</span></td>
                     <td className="text-xs text-surface-600 dark:text-surface-300">{r.room_number || '—'}</td>
-                    <td><CfuBadge val={r.iso5_cfu} t={CFU5} /></td>
-                    <td><CfuBadge val={r.iso7_cfu} t={CFU7} /></td>
+                    <td><CfuBadge val={activeCfu} isoClass={r.iso_class} /></td>
                     <td><ParticleBadge val={Number(r.particle_05um)} t={(PARTICLE_THRESHOLDS[r.iso_class] ?? PARTICLE_THRESHOLDS['ISO 7']).um05} /></td>
                     <td><ParticleBadge val={Number(r.particle_50um)} t={(PARTICLE_THRESHOLDS[r.iso_class] ?? PARTICLE_THRESHOLDS['ISO 7']).um50} /></td>
                     <td className="text-xs">{r.deviation_number || '—'}</td>
@@ -457,9 +647,11 @@ export default function RecordsPage() {
                         {canDelete && (
                           <>
                             <button onClick={() => setEditTarget({ type: 'viable', record: r })} className="btn-ghost p-1.5 text-brand-500 hover:bg-brand-50 dark:hover:bg-brand-900/20" title="Edit"><Pencil size={14} /></button>
-                            <button onClick={() => handleDeleteViable(r.id)} disabled={deletingViable === r.id}
+                            <button
+                              onClick={() => openDeleteViable(r)}
+                              aria-label={`Delete viable record for lot ${r.lot_number}`}
                               className="btn-ghost p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20" title="Delete">
-                              {deletingViable === r.id ? <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> : <Trash2 size={14} />}
+                              <Trash2 size={14} />
                             </button>
                           </>
                         )}
@@ -479,6 +671,21 @@ export default function RecordsPage() {
           <div className="overflow-x-auto scrollbar-thin">
             <table className="table-base min-w-[700px]">
               <thead><tr>
+                {canDelete && (
+                  <th className="w-10" onClick={e => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      aria-label="Select all surface records"
+                      checked={surfaceRecords.length > 0 && surfaceRecords.every(r => selectedSurface.has(r.id))}
+                      ref={el => { if (el) el.indeterminate = surfaceRecords.some(r => selectedSurface.has(r.id)) && !surfaceRecords.every(r => selectedSurface.has(r.id)); }}
+                      onChange={e => {
+                        if (e.target.checked) setSelectedSurface(new Set(surfaceRecords.map(r => r.id)));
+                        else setSelectedSurface(new Set());
+                      }}
+                      className="w-4 h-4 rounded accent-brand-600 cursor-pointer"
+                    />
+                  </th>
+                )}
                 <th>Sample Location</th><th>Lot Number</th><th>Sample Date</th>
                 <th>ISO Class</th><th>CFUs Found</th><th>Organism</th>
                 <th>Deviation #</th><th>Entered By</th>
@@ -486,11 +693,24 @@ export default function RecordsPage() {
               </tr></thead>
               <tbody>
                 {subLoading ? Array.from({length:6}).map((_,i)=>(
-                  <tr key={i}>{Array.from({length:9}).map((_,j)=><td key={j}><div className="h-4 bg-surface-100 dark:bg-surface-700 rounded animate-pulse"/></td>)}</tr>
+                  <tr key={i}>{Array.from({length:canDelete?10:9}).map((_,j)=><td key={j}><div className="h-4 bg-surface-100 dark:bg-surface-700 rounded animate-pulse"/></td>)}</tr>
                 )) : surfaceRecords.length === 0 ? (
-                  <tr><td colSpan={9} className="text-center py-12 text-surface-400">No surface records yet</td></tr>
-                ) : surfaceRecords.map(r => (
-                  <tr key={r.id}>
+                  <tr><td colSpan={canDelete?10:9} className="text-center py-12 text-surface-400">No surface records yet</td></tr>
+                ) : surfaceRecords.map(r => {
+                  const isSurfaceSelected = selectedSurface.has(r.id);
+                  return (
+                  <tr key={r.id} className={clsx(isSurfaceSelected ? 'bg-red-50/60 dark:bg-red-900/10' : '')}>
+                    {canDelete && (
+                      <td onClick={e => e.stopPropagation()} className="w-10">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select surface record for ${r.sample_location}`}
+                          checked={isSurfaceSelected}
+                          onChange={e => { setSelectedSurface(s => { const n = new Set(s); e.target.checked ? n.add(r.id) : n.delete(r.id); return n; }); }}
+                          className="w-4 h-4 rounded accent-brand-600 cursor-pointer"
+                        />
+                      </td>
+                    )}
                     <td className="font-semibold text-surface-800 dark:text-surface-200">{r.sample_location}</td>
                     <td className="font-mono text-xs">{r.lot_number}</td>
                     <td className="text-xs">{fmtHitDate(r.sample_date)}</td>
@@ -505,16 +725,19 @@ export default function RecordsPage() {
                         {canDelete && (
                           <>
                             <button onClick={() => setEditTarget({ type: 'surface', record: r })} className="btn-ghost p-1.5 text-brand-500 hover:bg-brand-50 dark:hover:bg-brand-900/20" title="Edit"><Pencil size={14} /></button>
-                            <button onClick={() => handleDeleteSurface(r.id)} disabled={deletingSurface === r.id}
+                            <button
+                              onClick={() => openDeleteSurface(r)}
+                              aria-label={`Delete surface record for ${r.sample_location}`}
                               className="btn-ghost p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20" title="Delete">
-                              {deletingSurface === r.id ? <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> : <Trash2 size={14} />}
+                              <Trash2 size={14} />
                             </button>
                           </>
                         )}
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -524,6 +747,32 @@ export default function RecordsPage() {
       <DrillDownDrawer data={drawer} onClose={() => setDrawer(null)} />
       <ViableDrawer lot={viableLot} records={viableRecords.filter(r => r.lot_number === viableLot)} onClose={() => setViableLot(null)} />
       <EditRecordModal target={editTarget} onClose={() => setEditTarget(null)} onSaved={handleSaved} />
+
+      {/* Single-record Delete Modal */}
+      {deleteModal && (
+        <DeleteConfirmModal
+          isOpen={deleteModal.isOpen}
+          onClose={() => setDeleteModal(null)}
+          onConfirm={handleDeleteConfirm}
+          recordType={deleteModal.recordType}
+          summary={deleteModal.summary}
+        />
+      )}
+
+      {/* Bulk Delete Modal */}
+      {canDelete && (() => {
+        const selCount = tab === 'pm' ? selectedPm.size : tab === 'viable' ? selectedViable.size : selectedSurface.size;
+        const recordTypeLabel = tab === 'pm' ? 'PM Monitoring' : tab === 'viable' ? 'Environmental/Viable' : 'Surface Sampling';
+        return (
+          <DeleteConfirmModal
+            isOpen={bulkDeleteOpen}
+            onClose={() => setBulkDeleteOpen(false)}
+            onConfirm={handleBulkDeleteConfirm}
+            recordType={`${selCount} ${recordTypeLabel}`}
+            summary={{ batch: `${selCount} record${selCount !== 1 ? 's' : ''} selected — one reason applies to all` }}
+          />
+        );
+      })()}
     </div>
   );
 }

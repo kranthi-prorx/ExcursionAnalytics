@@ -17,6 +17,7 @@ const SurfaceSamplingPage = lazy(() => import('./pages/SurfaceSamplingPage'));
 const RecordsPage         = lazy(() => import('./pages/RecordsPage'));
 const AnalyticsPage       = lazy(() => import('./pages/AnalyticsPage'));
 const UsersPage           = lazy(() => import('./pages/UsersPage'));
+const AuditLogsPage       = lazy(() => import('./pages/AuditLogsPage'));
 
 export default function App() {
   return (
@@ -41,7 +42,8 @@ export default function App() {
 
                 {/* Admin only */}
                 <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
-                  <Route path="/users" element={<UsersPage />} />
+                  <Route path="/users"      element={<UsersPage />} />
+                  <Route path="/audit-logs" element={<AuditLogsPage />} />
                 </Route>
               </Route>
             </Route>

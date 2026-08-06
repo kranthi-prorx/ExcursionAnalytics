@@ -15,6 +15,7 @@ const PERIODS = [
   { value: 'daily',   label: 'Today' },
   { value: 'weekly',  label: 'This Week' },
   { value: 'monthly', label: 'This Month' },
+  { value: 'yearly',  label: '1 Year' },
   { value: 'custom',  label: 'Custom Range' },
 ] as const;
 
@@ -33,7 +34,7 @@ export default function FilterBar({ filters, onChange, className }: Props) {
     onChange({ ...defaults, person: filters.person, lotNumber: filters.lotNumber, isoClass: filters.isoClass, location: filters.location, personnelType: filters.personnelType });
   };
 
-  const reset = () => onChange(getDefaultFilters('monthly'));
+  const reset = () => onChange(getDefaultFilters('yearly'));
 
   const hasActiveFilters = filters.person || filters.lotNumber || filters.isoClass || filters.location || filters.personnelType;
 
@@ -132,6 +133,7 @@ export default function FilterBar({ filters, onChange, className }: Props) {
             >
               <option value="">All Classes</option>
               {ISO_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+              <option value="ISO 8">ISO 8</option>
             </select>
           </div>
 

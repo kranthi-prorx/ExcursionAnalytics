@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, FlaskConical, PlusCircle, Users,
   LogOut, Sun, Moon, Menu, X, Activity, BarChart3,
-  Shield, ChevronRight, Pencil,
+  Shield, ChevronRight, Pencil, ScrollText,
 } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
@@ -16,6 +16,7 @@ const navItems = [
   { to: '/records',      icon: BarChart3,        label: 'Records',     roles: ['admin','manager','user'] },
   { to: '/analytics',    icon: Activity,         label: 'Analytics',   roles: ['admin','manager','user'] },
   { to: '/users',        icon: Users,            label: 'User Mgmt',   roles: ['admin'] },
+  { to: '/audit-logs',   icon: ScrollText,       label: 'Audit Logs',  roles: ['admin'] },
 ];
 
 export default function Sidebar() {
@@ -30,7 +31,8 @@ export default function Sidebar() {
     navigate('/login');
   };
 
-  const filtered = navItems.filter(n => user && n.roles.includes(user.role));
+  const userRole = (user?.role ?? '').toLowerCase();
+  const filtered = navItems.filter(n => user && n.roles.includes(userRole));
 
   return (
     <>

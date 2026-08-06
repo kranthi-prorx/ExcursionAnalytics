@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import type { AuthState, User } from '../types';
 import { authAPI } from '../lib/api';
+import { queryCache } from '../lib/queryCache';
 
 interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
@@ -36,7 +37,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Then verify with the backend — if 401, the response interceptor
     // in api.ts will clear localStorage and redirect to /login automatically.
-    authAPI.me().catch(() => {
+    // Also re-hydrate the user object so the role is always the live DB value.
+    authAPI.me().then(res => {
+      const freshUser = res.data;
+      localStorage.setItem('eha_user', JSON.stringify(freshUser));
+      setState(s => ({ ...s, user: freshUser }));
+    }).catch(() => {
       // Interceptor already handles the redirect; just clear local state
       setState({ user: null, token: null, isAuthenticated: false });
     });
@@ -44,6 +50,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 
   const login = async (email: string, password: string) => {
+    // Clear any cached data from a previous session before setting new auth state.
+    // This prevents stale data from one user being served to the next.
+    queryCache.clear();
     const res = await authAPI.login(email, password);
     const { token, user } = res.data;
     localStorage.setItem('eha_token', token);
@@ -52,6 +61,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    // Clear cached dashboard/analytics data so the next user starts with a fresh fetch.
+    queryCache.clear();
     localStorage.removeItem('eha_token');
     localStorage.removeItem('eha_user');
     setState({ user: null, token: null, isAuthenticated: false });

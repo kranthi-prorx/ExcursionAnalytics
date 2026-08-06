@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, Save, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { recordsAPI, viableAPI, surfaceAPI } from '../lib/api';
+import { queryCache } from '../lib/queryCache';
 import type { ViableRecord, SurfaceRecord } from '../lib/api';
 import type { ExcursionRecord } from '../types';
 import { clsx } from '../lib/utils';
@@ -56,6 +57,9 @@ function PMForm({ record, onSaved, onClose }: { record: ExcursionRecord; onSaved
         alert_level: Number(form.alert_level),
         action_level: Number(form.action_level),
       });
+      // Invalidate shared caches so all sessions see the updated record.
+      queryCache.invalidate('dashboard:');
+      queryCache.invalidate('analytics:');
       onSaved(res.data);
       toast.success('Record updated!');
       onClose();
@@ -95,6 +99,7 @@ function ViableForm({ record, onSaved, onClose }: { record: ViableRecord; onSave
     room_number:      record.room_number ?? '',
     iso5_cfu:         String(record.iso5_cfu ?? 0),
     iso7_cfu:         String(record.iso7_cfu ?? 0),
+    iso8_cfu:         String(record.iso8_cfu ?? 0),
     particle_05um:    String(record.particle_05um ?? 0),
     particle_50um:    String(record.particle_50um ?? 0),
     deviation_number: record.deviation_number ?? '',
@@ -103,13 +108,22 @@ function ViableForm({ record, onSaved, onClose }: { record: ViableRecord; onSave
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
 
+  // Determine active CFU field based on ISO class
+  const cfuFieldMap: Record<string, { field: 'iso5_cfu' | 'iso7_cfu' | 'iso8_cfu'; label: string }> = {
+    'ISO 5': { field: 'iso5_cfu', label: 'ISO 5 CFU' },
+    'ISO 7': { field: 'iso7_cfu', label: 'ISO 7 CFU' },
+    'ISO 8': { field: 'iso8_cfu', label: 'ISO 8 CFU' },
+  };
+  const activeField = cfuFieldMap[form.iso_class] ?? cfuFieldMap['ISO 7'];
+
   const save = async () => {
     setSaving(true);
     try {
       const res = await viableAPI.update(record.id, {
         ...form,
-        iso5_cfu:     Number(form.iso5_cfu),
-        iso7_cfu:     Number(form.iso7_cfu),
+        iso5_cfu:      Number(form.iso5_cfu),
+        iso7_cfu:      Number(form.iso7_cfu),
+        iso8_cfu:      Number(form.iso8_cfu),
         particle_05um: Number(form.particle_05um),
         particle_50um: Number(form.particle_50um),
       });
@@ -132,8 +146,7 @@ function ViableForm({ record, onSaved, onClose }: { record: ViableRecord; onSave
       <Field label="Room Number">
         <input className="input" placeholder="e.g. Room 101" value={form.room_number} onChange={e => set('room_number', e.target.value)} />
       </Field>
-      <Field label="ISO 5 CFU"><input type="number" className="input" value={form.iso5_cfu} onChange={e => set('iso5_cfu', e.target.value)} /></Field>
-      <Field label="ISO 7 CFU"><input type="number" className="input" value={form.iso7_cfu} onChange={e => set('iso7_cfu', e.target.value)} /></Field>
+      <Field label={activeField.label}><input type="number" className="input" value={form[activeField.field]} onChange={e => set(activeField.field, e.target.value)} /></Field>
       <Field label="0.5 μm Particle Count"><input type="number" className="input" value={form.particle_05um} onChange={e => set('particle_05um', e.target.value)} /></Field>
       <Field label="5.0 μm Particle Count"><input type="number" className="input" value={form.particle_50um} onChange={e => set('particle_50um', e.target.value)} /></Field>
       <Field label="Deviation Number"><input className="input" value={form.deviation_number} onChange={e => set('deviation_number', e.target.value)} /></Field>

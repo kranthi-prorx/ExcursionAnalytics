@@ -9,6 +9,11 @@ import {
 import toast from 'react-hot-toast';
 import { clsx } from '../lib/utils';
 import api from '../lib/api';
+import { queryCache } from '../lib/queryCache';
+import {
+  type ViableISOClass, CFU_THRESHOLDS, PARTICLE_THRESHOLDS,
+  evaluateCfuStatus, getCfuThresholdLabel, cfuStatusColor,
+} from '../lib/cfuConfig';
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 const schema = z.object({
@@ -18,6 +23,7 @@ const schema = z.object({
   room_number:      z.string().optional(),
   iso5_cfu:         z.coerce.number().int().min(0, 'Must be ≥ 0'),
   iso7_cfu:         z.coerce.number().int().min(0, 'Must be ≥ 0'),
+  iso8_cfu:         z.coerce.number().int().min(0, 'Must be ≥ 0'),
   particle_05um:    z.coerce.number().min(0, 'Must be ≥ 0'),
   particle_50um:    z.coerce.number().min(0, 'Must be ≥ 0'),
   deviation_number: z.string().optional(),
@@ -27,23 +33,6 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 const STEPS = ['Basic Info', 'CFU Counts', 'Particle Counts', 'Review & Save'];
-
-// Alert / Action thresholds for Non-Viable Air Particle Count
-const PARTICLE_THRESHOLDS = {
-  'ISO 5': { um05: { alert: 3_000,       action: 3_520       }, um50: { alert: 20,     action: 29      } },
-  'ISO 7': { um05: { alert: 300_000,     action: 352_000     }, um50: { alert: 2_000,  action: 2_930   } },
-  'ISO 8': { um05: { alert: 3_000_000,   action: 3_520_000   }, um50: { alert: 20_000, action: 29_300  } },
-} as const;
-
-// Alert / Action thresholds for Viable (CFU) counts
-// ISO 5: Alert = N/A (any count = action immediately), Action = 1
-// ISO 7: Alert = 5, Action = 10
-const CFU_THRESHOLDS = {
-  iso5: { alert: Infinity, action: 1  },   // N/A alert — any CFU triggers action
-  iso7: { alert: 5,        action: 10 },
-} as const;
-
-type IsoClass = keyof typeof PARTICLE_THRESHOLDS;
 
 function statusColor(val: number, alert: number, action: number) {
   if (val >= action) return 'border-red-400 dark:border-red-600 bg-red-50/60 dark:bg-red-900/15';
@@ -57,6 +46,14 @@ function StatusBadge({ val, alert, action }: { val: number; alert: number; actio
   return null;
 }
 
+/** CFU status badge using the centralized evaluateCfuStatus from cfuConfig */
+function CfuStatusBadge({ val, isoClass }: { val: number; isoClass: ViableISOClass }) {
+  const status = evaluateCfuStatus(val, isoClass);
+  if (status === 'action') return <span className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase tracking-wide">⚠ Action</span>;
+  if (status === 'alert')  return <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide">⚠ Alert</span>;
+  return null;
+}
+
 const defaultValues: FormData = {
   lot_number:       '',
   sample_date:      new Date().toISOString().slice(0, 10),
@@ -64,6 +61,7 @@ const defaultValues: FormData = {
   room_number:      '',
   iso5_cfu:         0,
   iso7_cfu:         0,
+  iso8_cfu:         0,
   particle_05um:    0,
   particle_50um:    0,
   deviation_number: '',
@@ -90,6 +88,9 @@ export default function ViableDataEntryPage() {
     setSubmitting(true);
     try {
       await api.post('/viable', data);
+      // Invalidate shared caches so all sessions see the new viable entry.
+      queryCache.invalidate('dashboard:');
+      queryCache.invalidate('analytics:');
       setSubmitted(prev => [...prev, data.lot_number]);
       toast.success('Entry saved successfully!');
       reset({ ...defaultValues, sample_date: data.sample_date });
@@ -220,76 +221,73 @@ export default function ViableDataEntryPage() {
             </div>
           )}
 
-          {/* ─── Step 1: CFU Counts ─── */}
-          {step === 1 && (
-            <div className="space-y-5">
-              <h2 className="text-base font-semibold text-surface-800 dark:text-surface-200">CFU Counts</h2>
-              <p className="text-xs text-surface-500 dark:text-surface-400">
-                Enter the number of Colony Forming Units found in each ISO class zone.
-              </p>
+          {/* ─── Step 1: CFU Counts — shows only the CFU field for the selected ISO class ─── */}
+          {step === 1 && (() => {
+            const selectedIso = (values.iso_class || 'ISO 7') as ViableISOClass;
+            const thresholdLabels = getCfuThresholdLabel(selectedIso);
+            const cfuFieldMap: Record<ViableISOClass, { field: 'iso5_cfu' | 'iso7_cfu' | 'iso8_cfu'; label: string }> = {
+              'ISO 5': { field: 'iso5_cfu', label: 'ISO 5 CFUs Found' },
+              'ISO 7': { field: 'iso7_cfu', label: 'ISO 7 CFUs Found' },
+              'ISO 8': { field: 'iso8_cfu', label: 'ISO 8 CFUs Found' },
+            };
+            const activeField = cfuFieldMap[selectedIso];
+            const activeVal = Number(values[activeField.field]) || 0;
 
-              {/* CFU threshold reference table */}
-              <div className="rounded-xl border border-surface-100 dark:border-surface-700 overflow-hidden text-xs">
-                <div className="grid grid-cols-3 bg-surface-50 dark:bg-surface-800 px-3 py-2 font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wide">
-                  <span>Sample Type</span>
-                  <span className="text-amber-600 dark:text-amber-400">Alert Level</span>
-                  <span className="text-red-600 dark:text-red-400">Action Level</span>
+            return (
+              <div className="space-y-5">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base font-semibold text-surface-800 dark:text-surface-200">CFU Counts</h2>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300">{selectedIso}</span>
                 </div>
-                <div className="grid grid-cols-3 px-3 py-2 border-t border-surface-100 dark:border-surface-700 text-surface-700 dark:text-surface-300">
-                  <span className="font-medium">ISO 5 CFU</span>
-                  <span className="text-surface-400 italic">N/A</span>
-                  <span>1</span>
-                </div>
-                <div className="grid grid-cols-3 px-3 py-2 border-t border-surface-100 dark:border-surface-700 text-surface-700 dark:text-surface-300">
-                  <span className="font-medium">ISO 7 CFU</span>
-                  <span>5</span>
-                  <span>10</span>
-                </div>
-              </div>
+                <p className="text-xs text-surface-500 dark:text-surface-400">
+                  Enter the number of Colony Forming Units found in the <strong>{selectedIso}</strong> sampling area.
+                </p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                {/* ISO 5 CFU */}
+                {/* CFU threshold reference — shows only the selected ISO class */}
+                <div className="rounded-xl border border-surface-100 dark:border-surface-700 overflow-hidden text-xs">
+                  <div className="grid grid-cols-3 bg-surface-50 dark:bg-surface-800 px-3 py-2 font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wide">
+                    <span>Sample Type</span>
+                    <span className="text-amber-600 dark:text-amber-400">Alert Level</span>
+                    <span className="text-red-600 dark:text-red-400">Action Level</span>
+                  </div>
+                  <div className="grid grid-cols-3 px-3 py-2 border-t border-surface-100 dark:border-surface-700 text-surface-700 dark:text-surface-300">
+                    <span className="font-medium">{selectedIso} CFU</span>
+                    <span className={CFU_THRESHOLDS[selectedIso].alert === null ? 'text-surface-400 italic' : ''}>
+                      {CFU_THRESHOLDS[selectedIso].alert === null ? 'N/A' : CFU_THRESHOLDS[selectedIso].alert}
+                    </span>
+                    <span>{CFU_THRESHOLDS[selectedIso].action}</span>
+                  </div>
+                </div>
+
+                {/* Single CFU input for the active ISO class */}
                 <div className={clsx(
-                  'p-4 rounded-xl border-2 transition-all',
-                  statusColor(Number(values.iso5_cfu), CFU_THRESHOLDS.iso5.alert, CFU_THRESHOLDS.iso5.action)
+                  'p-4 rounded-xl border-2 transition-all max-w-md',
+                  cfuStatusColor(activeVal, selectedIso)
                 )}>
                   <div className="flex items-center justify-between mb-2">
-                    <label className="label mb-0" htmlFor="iso5_cfu">ISO 5 CFUs Found</label>
-                    <StatusBadge val={Number(values.iso5_cfu)} alert={CFU_THRESHOLDS.iso5.alert} action={CFU_THRESHOLDS.iso5.action} />
+                    <label className="label mb-0" htmlFor={activeField.field}>{activeField.label}</label>
+                    <CfuStatusBadge val={activeVal} isoClass={selectedIso} />
                   </div>
                   <input
-                    id="iso5_cfu" type="number" min={0} step={1}
-                    {...register('iso5_cfu')}
-                    className={`input mt-1 ${errors.iso5_cfu ? 'input-error' : ''}`}
+                    id={activeField.field} type="number" min={0} step={1}
+                    {...register(activeField.field)}
+                    className={`input mt-1 ${errors[activeField.field] ? 'input-error' : ''}`}
                   />
-                  <p className="mt-1.5 text-[11px] text-surface-400">Alert: N/A &nbsp;|&nbsp; Action ≥ 1</p>
-                  {errors.iso5_cfu && <p className="mt-1 text-xs text-red-500">{errors.iso5_cfu.message}</p>}
+                  <p className="mt-1.5 text-[11px] text-surface-400">{thresholdLabels.alertLabel} &nbsp;|&nbsp; {thresholdLabels.actionLabel}</p>
+                  {errors[activeField.field] && <p className="mt-1 text-xs text-red-500">{errors[activeField.field]?.message}</p>}
                 </div>
 
-                {/* ISO 7 CFU */}
-                <div className={clsx(
-                  'p-4 rounded-xl border-2 transition-all',
-                  statusColor(Number(values.iso7_cfu), CFU_THRESHOLDS.iso7.alert, CFU_THRESHOLDS.iso7.action)
-                )}>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="label mb-0" htmlFor="iso7_cfu">ISO 7 CFUs Found</label>
-                    <StatusBadge val={Number(values.iso7_cfu)} alert={CFU_THRESHOLDS.iso7.alert} action={CFU_THRESHOLDS.iso7.action} />
-                  </div>
-                  <input
-                    id="iso7_cfu" type="number" min={0} step={1}
-                    {...register('iso7_cfu')}
-                    className={`input mt-1 ${errors.iso7_cfu ? 'input-error' : ''}`}
-                  />
-                  <p className="mt-1.5 text-[11px] text-surface-400">Alert ≥ 5 &nbsp;|&nbsp; Action ≥ 10</p>
-                  {errors.iso7_cfu && <p className="mt-1 text-xs text-red-500">{errors.iso7_cfu.message}</p>}
-                </div>
+                <p className="text-[11px] text-surface-400 dark:text-surface-500 italic">
+                  Only the {selectedIso} CFU field is active because the sampling area is {selectedIso}.
+                  Other ISO CFU fields are automatically set to 0.
+                </p>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* ─── Step 2: Particle Counts + Deviation/Notes ─── */}
           {step === 2 && (() => {
-            const iso = (values.iso_class || 'ISO 7') as IsoClass;
+            const iso = (values.iso_class || 'ISO 7') as ViableISOClass;
             const t = PARTICLE_THRESHOLDS[iso];
             const v05 = Number(values.particle_05um) || 0;
             const v50 = Number(values.particle_50um) || 0;
@@ -357,30 +355,36 @@ export default function ViableDataEntryPage() {
           })()}
 
           {/* ─── Step 3: Review ─── */}
-          {step === 3 && (
-            <div className="space-y-5">
-              <h2 className="text-base font-semibold text-surface-800 dark:text-surface-200">Review &amp; Confirm</h2>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-                {[
-                  ['Lot Number',    values.lot_number],
-                  ['Sample Date',   values.sample_date ? (() => { const [y,m,d] = values.sample_date.split('-'); return `${m}-${d}-${y}`; })() : ''],
-                  ['ISO Class',     values.iso_class],
-                  ['Room Number',   values.room_number || '—'],
-                  ['ISO 5 CFUs',    String(values.iso5_cfu)],
-                  ['ISO 7 CFUs',    String(values.iso7_cfu)],
-                  ['0.5 μm (p/m³)', String(values.particle_05um)],
-                  ['5.0 μm (p/m³)', String(values.particle_50um)],
-                  ['Deviation #',   values.deviation_number || '—'],
-                  ['Notes',         values.notes || '—'],
-                ].map(([k, v]) => (
-                  <div key={k} className="rounded-xl p-3 bg-surface-50 dark:bg-surface-800">
-                    <p className="text-[10px] font-semibold text-surface-500 uppercase tracking-wide mb-0.5">{k}</p>
-                    <p className="font-semibold text-surface-800 dark:text-surface-100">{v || '—'}</p>
-                  </div>
-                ))}
+          {step === 3 && (() => {
+            const reviewIso = (values.iso_class || 'ISO 7') as ViableISOClass;
+            const cfuLabel = `${reviewIso} CFUs`;
+            const cfuVal = reviewIso === 'ISO 5' ? String(values.iso5_cfu)
+                         : reviewIso === 'ISO 8' ? String(values.iso8_cfu)
+                         : String(values.iso7_cfu);
+            return (
+              <div className="space-y-5">
+                <h2 className="text-base font-semibold text-surface-800 dark:text-surface-200">Review &amp; Confirm</h2>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                  {[
+                    ['Lot Number',    values.lot_number],
+                    ['Sample Date',   values.sample_date ? (() => { const [y,m,d] = values.sample_date.split('-'); return `${m}-${d}-${y}`; })() : ''],
+                    ['ISO Class',     values.iso_class],
+                    ['Room Number',   values.room_number || '—'],
+                    [cfuLabel,        cfuVal],
+                    ['0.5 μm (p/m³)', String(values.particle_05um)],
+                    ['5.0 μm (p/m³)', String(values.particle_50um)],
+                    ['Deviation #',   values.deviation_number || '—'],
+                    ['Notes',         values.notes || '—'],
+                  ].map(([k, v]) => (
+                    <div key={k} className="rounded-xl p-3 bg-surface-50 dark:bg-surface-800">
+                      <p className="text-[10px] font-semibold text-surface-500 uppercase tracking-wide mb-0.5">{k}</p>
+                      <p className="font-semibold text-surface-800 dark:text-surface-100">{v || '—'}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Navigation */}
           <div className="flex items-center justify-between pt-4 border-t border-surface-100 dark:border-surface-800">

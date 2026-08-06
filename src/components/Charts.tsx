@@ -1,9 +1,10 @@
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, Tooltip,
-  XAxis, YAxis, CartesianGrid, ResponsiveContainer, Legend, Sector
+  XAxis, YAxis, CartesianGrid, ResponsiveContainer, Legend, Sector,
+  ScatterChart, Scatter, ZAxis
 } from 'recharts';
-import { useState } from 'react';
-import type { TrendData, PersonHits, LocationHits } from '../types';
+import { useState, useMemo } from 'react';
+import type { TrendData, PersonHits, LocationHits, BatchTotal } from '../types';
 import { CHART_COLORS } from '../lib/utils';
 
 // Palette for per-lot lines (cycles if there are more lots than colors)
@@ -30,36 +31,136 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-// ─── Trends Line Chart ────────────────────────────────────────────────────────
+// ─── Trends Line Chart (Average Hits per Processed Batch) ─────────────────────
 export function TrendsChart({ data, onBarClick }: { data: TrendData[]; onBarClick?: (d: TrendData) => void }) {
+  // Show average_hits_per_batch as main line; fall back to total hits if no batch data
+  const hasBatchData = data.some(d => (d.processed_batch_count ?? 0) > 0);
+
+  // Determine if ISO series have data (when filtered, one series may be all zeros)
+  const hasISO5 = data.some(d => (d.iso5 ?? 0) > 0);
+  const hasISO7 = data.some(d => (d.iso7 ?? 0) > 0);
+
+  // Enhanced tooltip with batch calculation breakdown
+  const TrendTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    const d = payload[0]?.payload;
+    return (
+      <div className="bg-white dark:bg-surface-800 rounded-xl p-3 shadow-xl border border-surface-100 dark:border-surface-700 text-xs max-w-56">
+        {label && <p className="font-semibold text-surface-700 dark:text-surface-200 mb-1.5">{label}</p>}
+        {payload.map((p: any) => (
+          <div key={p.name} className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full" style={{ background: p.color }} />
+            <span className="text-surface-500 dark:text-surface-400 capitalize">{p.name}:</span>
+            <span className="font-bold text-surface-800 dark:text-surface-100">{p.value}</span>
+          </div>
+        ))}
+        {d?.processed_batch_count > 0 && (
+          <div className="mt-1.5 pt-1.5 border-t border-surface-100 dark:border-surface-700 text-surface-400 dark:text-surface-500">
+            <span>{d.hits} hits ÷ {d.processed_batch_count} batches = <strong className="text-surface-600 dark:text-surface-300">{d.average_hits_per_batch}</strong> avg</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <ResponsiveContainer width="100%" height={240}>
+    <ResponsiveContainer width="100%" height={280}>
       <LineChart data={data} onClick={d => d?.activePayload?.[0] && onBarClick?.(d.activePayload[0].payload)}>
         <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
         <XAxis dataKey="date" tick={{ fontSize: 11 }} />
         <YAxis tick={{ fontSize: 11 }} />
-        <Tooltip content={<CustomTooltip />} />
+        <Tooltip content={<TrendTooltip />} />
         <Legend wrapperStyle={{ fontSize: 12 }} />
-        <Line type="monotone" dataKey="hits" stroke={CHART_COLORS.primary} strokeWidth={2.5}
-          dot={{ r: 3, fill: CHART_COLORS.primary }} activeDot={{ r: 6, strokeWidth: 0 }} name="Total Hits" />
-        <Line type="monotone" dataKey="iso5" stroke={CHART_COLORS.iso5} strokeWidth={2}
-          dot={{ r: 2 }} name="ISO 5" strokeDasharray="4 2" />
-        <Line type="monotone" dataKey="iso7" stroke={CHART_COLORS.iso7} strokeWidth={2}
-          dot={{ r: 2 }} name="ISO 7" strokeDasharray="4 2" />
+        {hasBatchData && (
+          <Line type="monotone" dataKey="average_hits_per_batch" stroke={CHART_COLORS.avgBatch} strokeWidth={2.5}
+            dot={{ r: 3, fill: CHART_COLORS.avgBatch }} activeDot={{ r: 6, strokeWidth: 0 }} name="Avg Hits/Batch" />
+        )}
+        <Line type="monotone" dataKey="hits" stroke={CHART_COLORS.primary} strokeWidth={hasBatchData ? 1.5 : 2.5}
+          dot={{ r: hasBatchData ? 2 : 3, fill: CHART_COLORS.primary }} activeDot={{ r: 6, strokeWidth: 0 }}
+          name="Total Hits" strokeDasharray={hasBatchData ? '4 2' : undefined} />
+        {hasISO5 && (
+          <Line type="monotone" dataKey="iso5" stroke={CHART_COLORS.iso5} strokeWidth={1.5}
+            dot={{ r: 2 }} name="ISO 5" strokeDasharray="4 2" />
+        )}
+        {hasISO7 && (
+          <Line type="monotone" dataKey="iso7" stroke={CHART_COLORS.iso7} strokeWidth={1.5}
+            dot={{ r: 2 }} name="ISO 7" strokeDasharray="4 2" />
+        )}
       </LineChart>
     </ResponsiveContainer>
   );
 }
 
+// ─── Batch Scatter Chart (Batch Hit Distribution) ─────────────────────────────
+export function BatchScatterChart({ data, onPointClick }: { data: BatchTotal[]; onPointClick?: (d: BatchTotal) => void }) {
+  // Generate deterministic jitter for overlapping points
+  const scatterData = useMemo(() => {
+    // Count occurrences of (date + hits) to apply jitter
+    const pointCounts: Record<string, number> = {};
+    return data.map(d => {
+      const key = `${d.date_of_batch}_${d.batch_hits}`;
+      pointCounts[key] = (pointCounts[key] || 0) + 1;
+      
+      // Simple deterministic pseudo-random based on string hash for jitter
+      let hash = 0;
+      for (let i = 0; i < d.batch_id.length; i++) hash = ((hash << 5) - hash) + d.batch_id.charCodeAt(i);
+      
+      // Apply slight jitter (max ±0.2 on a categorical date axis) if there are overlaps
+      // But recharts categorical XAxis jitter requires careful handling. We will let Recharts handle standard categorical layout,
+      // and use ZAxis for node sizing, or we add slight numerical jitter if we converted dates to timestamps.
+      // Since it's categorical XAxis (date string), Recharts naturally centers them. 
+      // We will map 'x' to date_of_batch, 'y' to batch_hits.
+      return {
+        ...d,
+        x: d.date_of_batch,
+        y: d.batch_hits,
+        z: 1 // for dot sizing
+      };
+    });
+  }, [data]);
 
-// ─── Person Bar Chart ─────────────────────────────────────────────────────────
-export function PersonChart({ data, onBarClick }: { data: PersonHits[]; onBarClick?: (d: PersonHits) => void }) {
-  // Each row 28px; container caps at 280px and scrolls beyond
-  const chartHeight = Math.max(200, data.length * 28);
+  const ScatterTooltip = ({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+    const d = payload[0]?.payload as BatchTotal;
+    return (
+      <div className="bg-white dark:bg-surface-800 rounded-xl p-3 shadow-xl border border-surface-100 dark:border-surface-700 text-xs">
+        <p className="font-semibold text-surface-700 dark:text-surface-200 mb-1.5">{d.batch_number}</p>
+        <div className="space-y-1 text-surface-600 dark:text-surface-300">
+          <p><span className="text-surface-400">Date of Batch:</span> {d.date_of_batch}</p>
+          <p><span className="text-surface-400">ISO Class:</span> {d.iso_class || 'Mixed/None'}</p>
+          <p><span className="text-surface-400">Batch Total Hits:</span> <strong className="text-surface-800 dark:text-white">{d.batch_hits}</strong></p>
+          <div className="pt-1 mt-1 border-t border-surface-100 dark:border-surface-700">
+            <p><span className="text-surface-400">Personnel Records:</span> {d.personnel_record_count}</p>
+            <p><span className="text-surface-400">Distinct Personnel:</span> {d.distinct_personnel_count}</p>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
-    <div style={{ maxHeight: 280, overflowY: 'auto' }} className="scrollbar-thin pr-1">
-      <div style={{ height: chartHeight }}>
+    <ResponsiveContainer width="100%" height={280}>
+      <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 0 }} onClick={(e: any) => e?.activePayload?.[0] && onPointClick?.(e.activePayload[0].payload)}>
+        <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+        <XAxis dataKey="x" type="category" allowDuplicatedCategory={true} tick={{ fontSize: 11 }} name="Date of Batch" />
+        <YAxis dataKey="y" type="number" tick={{ fontSize: 11 }} name="Batch Hits" />
+        <ZAxis dataKey="z" range={[40, 100]} />
+        <Tooltip content={<ScatterTooltip />} cursor={{ strokeDasharray: '3 3' }} />
+        <Scatter name="Batches" data={scatterData} fill={CHART_COLORS.primary} fillOpacity={0.6} stroke={CHART_COLORS.primary} style={{ cursor: 'pointer' }} />
+      </ScatterChart>
+    </ResponsiveContainer>
+  );
+}
+
+
+// ─── Person Bar Chart (scrollable, unlimited data) ────────────────────────────
+export function PersonChart({ data, onBarClick }: { data: PersonHits[]; onBarClick?: (d: PersonHits) => void }) {
+  // Fixed outer height; inner content scrolls when data exceeds the container
+  const innerHeight = Math.max(240, data.length * 28);
+
+  return (
+    <div style={{ height: 280, overflowY: 'auto' }} className="scrollbar-thin pr-1">
+      <div style={{ height: innerHeight, minHeight: 240 }}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} layout="vertical"
             margin={{ top: 4, right: 16, bottom: 4, left: 0 }}
@@ -81,20 +182,31 @@ export function PersonChart({ data, onBarClick }: { data: PersonHits[]; onBarCli
 }
 
 
-// ─── Location Bar Chart ───────────────────────────────────────────────────────
+// ─── Location Bar Chart (ISO-labeled display names) ───────────────────────────
 export function LocationChart({ data, onBarClick }: { data: LocationHits[]; onBarClick?: (d: LocationHits) => void }) {
+  // Use display_label for X-axis if available, otherwise fall back to location
+  const chartData = data.map(d => ({
+    ...d,
+    displayName: d.display_label || d.location,
+  }));
+
   return (
-    <ResponsiveContainer width="100%" height={240}>
-      <BarChart data={data}
-        onClick={d => d?.activePayload?.[0] && onBarClick?.(d.activePayload[0].payload)}>
+    <ResponsiveContainer width="100%" height={280}>
+      <BarChart data={chartData}
+        onClick={d => d?.activePayload?.[0] && onBarClick?.(d.activePayload[0].payload)}
+        margin={{ top: 4, right: 16, bottom: 40, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-        <XAxis dataKey="location" tick={{ fontSize: 10 }} />
+        <XAxis dataKey="displayName" tick={{ fontSize: 9 }} interval={0} angle={-30} textAnchor="end" height={60} />
         <YAxis tick={{ fontSize: 11 }} />
         <Tooltip content={<CustomTooltip />} />
         <Bar dataKey="hits" name="Hits" radius={[6, 6, 0, 0]} style={{ cursor: 'pointer' }}>
-          {data.map((_, i) => (
-            <Cell key={i} fill={CHART_COLORS.gradient[i % CHART_COLORS.gradient.length]} />
-          ))}
+          {chartData.map((d, i) => {
+            // Color by ISO class if available
+            const fill = d.iso_class === 'ISO 5' ? CHART_COLORS.iso5
+                       : d.iso_class === 'ISO 7' ? CHART_COLORS.iso7
+                       : CHART_COLORS.gradient[i % CHART_COLORS.gradient.length];
+            return <Cell key={i} fill={fill} />;
+          })}
         </Bar>
       </BarChart>
     </ResponsiveContainer>
@@ -122,7 +234,7 @@ export function ISOPieChart({ data, onSliceClick }: {
   const colors = [CHART_COLORS.iso5, CHART_COLORS.iso7];
 
   return (
-    <ResponsiveContainer width="100%" height={240}>
+    <ResponsiveContainer width="100%" height={280}>
       <PieChart>
         <Pie
           data={data}
@@ -156,7 +268,7 @@ export function ISOPieChart({ data, onSliceClick }: {
   );
 }
 
-// ─── Heatmap ──────────────────────────────────────────────────────────────────
+// ─── Heatmap (ISO-labeled locations) ──────────────────────────────────────────
 export function HeatmapChart({ data }: { data: LocationHits[] }) {
   const max = Math.max(...data.map(d => d.hits), 1);
 
@@ -165,14 +277,15 @@ export function HeatmapChart({ data }: { data: LocationHits[] }) {
       {data.map(d => {
         const intensity = d.hits / max;
         const bg = `rgba(99,102,241,${0.1 + intensity * 0.9})`;
+        const displayName = d.display_label || d.location;
         return (
           <div
-            key={d.location}
+            key={displayName}
             className="rounded-xl p-3 flex flex-col items-center gap-1 transition-all duration-300 hover:scale-105 cursor-default"
             style={{ background: bg }}
           >
             <span className="text-[11px] font-semibold text-center leading-tight text-surface-700 dark:text-surface-200">
-              {d.location}
+              {displayName}
             </span>
             <span className="text-xl font-bold text-white">{d.hits}</span>
             <span className="text-[10px] text-white/70">{d.percentage.toFixed(0)}%</span>
@@ -183,20 +296,27 @@ export function HeatmapChart({ data }: { data: LocationHits[] }) {
   );
 }
 
-// ─── Lot Bar Chart ────────────────────────────────────────────────────────────
+// ─── Lot Bar Chart (scrollable, unlimited data) ───────────────────────────────
 export function LotChart({ data, onBarClick }: { data: { lot_number: string; hits: number }[]; onBarClick?: (lot: string) => void }) {
+  // Fixed outer height; inner content scrolls when there are many lots
+  const innerHeight = Math.max(240, data.length > 10 ? data.length * 22 + 40 : 240);
+
   return (
-    <ResponsiveContainer width="100%" height={240}>
-      <BarChart data={data}
-        onClick={d => d?.activePayload?.[0] && onBarClick?.(d.activePayload[0].payload.lot_number)}>
-        <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-        <XAxis dataKey="lot_number" tick={{ fontSize: 10 }} />
-        <YAxis tick={{ fontSize: 11 }} />
-        <Tooltip content={<CustomTooltip />} />
-        <Bar dataKey="hits" name="Hits" fill={CHART_COLORS.purple} radius={[6, 6, 0, 0]}
-          style={{ cursor: 'pointer' }} />
-      </BarChart>
-    </ResponsiveContainer>
+    <div style={{ height: 280, overflowY: data.length > 10 ? 'auto' : undefined }} className="scrollbar-thin pr-1">
+      <div style={{ height: innerHeight, minHeight: 240 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data}
+            onClick={d => d?.activePayload?.[0] && onBarClick?.(d.activePayload[0].payload.lot_number)}>
+            <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+            <XAxis dataKey="lot_number" tick={{ fontSize: 10 }} />
+            <YAxis tick={{ fontSize: 11 }} />
+            <Tooltip content={<CustomTooltip />} />
+            <Bar dataKey="hits" name="Hits" fill={CHART_COLORS.purple} radius={[6, 6, 0, 0]}
+              style={{ cursor: 'pointer' }} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
   );
 }
 
@@ -226,7 +346,7 @@ export function LotTrendsChart({
   }
 
   return (
-    <ResponsiveContainer width="100%" height={260}>
+    <ResponsiveContainer width="100%" height={280}>
       <LineChart
         data={chartData}
         onClick={d => {
@@ -279,9 +399,9 @@ function LotTick({ x, y, payload }: any) {
   );
 }
 
-// ─── Viable CFU by Lot (line: ISO5 + ISO7) ───────────────────────────────────
+// ─── Viable CFU by Lot (line: ISO5 + ISO7 + ISO8) ────────────────────────────
 export interface ViableByLotData {
-  lot_number: string; iso5_total: number; iso7_total: number;
+  lot_number: string; iso5_total: number; iso7_total: number; iso8_total?: number;
   avg_05um: number; avg_50um: number;
 }
 
@@ -289,8 +409,11 @@ export function ViableCFUChart({ data, onBarClick }: { data: ViableByLotData[]; 
   if (!data.length) return (
     <div className="flex items-center justify-center h-48 text-surface-400 text-sm">No data yet</div>
   );
+
+  const hasIso8 = data.some(d => (d.iso8_total ?? 0) > 0);
+
   return (
-    <ResponsiveContainer width="100%" height={260}>
+    <ResponsiveContainer width="100%" height={280}>
       <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 80 }}
         style={onBarClick ? { cursor: 'pointer' } : undefined}
         onClick={d => d?.activePayload?.[0] && onBarClick?.(d.activePayload[0].payload.lot_number)}>
@@ -309,6 +432,13 @@ export function ViableCFUChart({ data, onBarClick }: { data: ViableByLotData[]; 
           dot={{ r: 4, fill: '#22d3ee', strokeWidth: 0 }}
           activeDot={{ r: 7, strokeWidth: 0 }}
           connectNulls />
+        {hasIso8 && (
+          <Line type="monotone" dataKey="iso8_total" name="ISO 8 CFU"
+            stroke="#a855f7" strokeWidth={2.5}
+            dot={{ r: 4, fill: '#a855f7', strokeWidth: 0 }}
+            activeDot={{ r: 7, strokeWidth: 0 }}
+            connectNulls />
+        )}
       </LineChart>
     </ResponsiveContainer>
   );
@@ -320,7 +450,7 @@ export function ParticleCountChart({ data, onBarClick }: { data: ViableByLotData
     <div className="flex items-center justify-center h-48 text-surface-400 text-sm">No data yet</div>
   );
   return (
-    <ResponsiveContainer width="100%" height={260}>
+    <ResponsiveContainer width="100%" height={280}>
       <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 80 }}
         style={onBarClick ? { cursor: 'pointer' } : undefined}
         onClick={d => d?.activePayload?.[0] && onBarClick?.(d.activePayload[0].payload.lot_number)}>

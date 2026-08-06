@@ -24,6 +24,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/records':    'Records',
   '/analytics':  'Analytics',
   '/users':      'User Management',
+  '/audit-logs': 'Audit Logs',
 };
 
 export default function AppLayout() {
