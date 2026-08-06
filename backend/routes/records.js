@@ -155,7 +155,7 @@ router.put('/:id', authMiddleware, requireRole('admin', 'manager'), async (req, 
 });
 
 // DELETE /api/records/:id — soft delete
-router.delete('/:id', authMiddleware, requireRole('admin', 'manager'), async (req, res) => {
+router.delete('/:id', authMiddleware, requireRole('admin', 'manager', 'user'), async (req, res) => {
   const reason = ((req.body && req.body.reason) || '').trim();
   if (!reason || reason.length < 3) return res.status(400).json({ message: 'A deletion reason of at least 3 characters is required.' });
   if (reason.length > 500) return res.status(400).json({ message: 'Deletion reason must not exceed 500 characters.' });

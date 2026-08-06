@@ -119,7 +119,7 @@ export default function RecordsPage() {
     setSelectedSurface(new Set());
   };
 
-  const canDelete = ['admin', 'manager'].includes((user?.role ?? '').toLowerCase());
+  const canDelete = !!user;
   const canExport = ['admin', 'manager'].includes((user?.role ?? '').toLowerCase());
 
   const fetchRecords = useCallback(async () => {
