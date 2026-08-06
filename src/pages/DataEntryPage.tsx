@@ -498,16 +498,19 @@ export default function DataEntryPage() {
                 })}
               </div>
 
-              {/* Combined Fingertip Summary */}
+              {/* Combined Fingertip Summary — ISO 7 (Crimping) only */}
+              {/* ISO 5 fingertips are independent — no combined display */}
               {(() => {
                 const hd = (values.hit_details ?? []).map(h => ({
                   location: h.location, hit_value: h.hit_value || 0, iso_class: h.iso_class,
                 }));
                 const results = getCombinedFingertipStatus(hd);
-                if (results.length === 0) return null;
+                // Only show combined for ISO 7 — ISO 5 fingertips are independent
+                const iso7Results = results.filter(r => r.isoClass === 'ISO 7');
+                if (iso7Results.length === 0) return null;
                 return (
                   <div className="space-y-2 mt-2">
-                    {results.map(r => (
+                    {iso7Results.map(r => (
                       <div key={r.isoClass} className={clsx(
                         'p-4 rounded-xl border-2 transition-all duration-200',
                         r.status === 'exceeded'
@@ -519,7 +522,7 @@ export default function DataEntryPage() {
                             <span className="text-sm font-semibold text-surface-700 dark:text-surface-300">Combined Fingertips</span>
                             <IsoBadge iso={r.isoClass} />
                             {r.status === 'exceeded' && (
-                              <span className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase tracking-wide">⚠ {r.thresholdLabel}</span>
+                              <span className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase tracking-wide">⚠ Action</span>
                             )}
                           </div>
                           <span className={clsx('text-lg font-bold', r.status === 'exceeded' ? 'text-red-600 dark:text-red-400' : 'text-surface-700 dark:text-surface-300')}>
@@ -530,7 +533,7 @@ export default function DataEntryPage() {
                           <span>Left: <strong className="text-surface-700 dark:text-surface-300">{r.leftHits}</strong></span>
                           <span>+ Right: <strong className="text-surface-700 dark:text-surface-300">{r.rightHits}</strong></span>
                           <span>= Combined: <strong className="text-surface-700 dark:text-surface-300">{r.combinedHits}</strong></span>
-                          <span className="ml-auto">({r.thresholdLabel} &gt; {r.actionThreshold})</span>
+                          <span className="ml-auto">(Action &gt; {r.actionThreshold})</span>
                         </div>
                       </div>
                     ))}

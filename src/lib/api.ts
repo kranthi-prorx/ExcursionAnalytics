@@ -3,6 +3,7 @@ import type {
   ExcursionRecord, KPISummary, TrendData, PersonHits,
   LocationHits, LotHits, FilterState, User, BatchTotal,
   AuditLog, AuditLogListItem, AuditLogsResponse,
+  ThresholdEvent, PersonEventCount,
 } from '../types';
 
 const api = axios.create({
@@ -95,6 +96,10 @@ export const analyticsAPI = {
   }) => api.get<{ records: ExcursionRecord[]; total: number; limit: number; offset: number }>(
     '/analytics/drill-down', { params }
   ),
+  thresholdEvents: (filters?: Partial<FilterState>) =>
+    api.get<ThresholdEvent[]>('/analytics/threshold-events', { params: buildParams(filters ?? {}) }),
+  byPersonEvents: (filters?: Partial<FilterState>) =>
+    api.get<PersonEventCount[]>('/analytics/by-person-events', { params: buildParams(filters ?? {}) }),
 };
 
 // ─── Users API ───────────────────────────────────────────────────────────────

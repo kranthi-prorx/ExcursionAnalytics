@@ -39,8 +39,11 @@ export function getLocationConfig(
     return { iso_class: 'ISO 7', alert_level: 6, action_level: 11 };
   }
 
-  // Crimping / Helper — Finger Tips only → ISO 7: Alert >1 (≥2), Action >3 (≥4)
-  return { iso_class: 'ISO 7', alert_level: 2, action_level: 4 };
+  // Crimping / Helper — Finger Tips only → ISO 7
+  // Individual L/R: Alert ≥ 1 (alert only, never individual action)
+  // Combined L+R: Action when > 3 (evaluated by threshold engine, not here)
+  // action_level is set high so individual cards never show "Action" badge
+  return { iso_class: 'ISO 7', alert_level: 1, action_level: 9999 };
 }
 
 // Locations available per personnel type
@@ -223,4 +226,31 @@ export interface AuditLogsResponse {
   page: number;
   limit: number;
   pages: number;
+}
+
+// ─── Threshold Events ─────────────────────────────────────────────────────────
+export interface ThresholdEvent {
+  record_id: string;
+  personnel_name: string;
+  personnel_type: string;
+  lot_number: string;
+  date_of_batch: string;
+  iso_class: string;
+  rule_key: string;
+  location: string;
+  display_label: string;
+  severity: 'ALERT' | 'ACTION';
+  measured_value: number;
+  threshold_value: number;
+  threshold_description?: string;
+  left_value?: number;
+  right_value?: number;
+}
+
+export interface PersonEventCount {
+  name: string;
+  name_key: string;
+  personnel_type: string;
+  alert_events: number;
+  action_events: number;
 }

@@ -2,6 +2,7 @@ const router = require('express').Router();
 const pool = require('../db');
 const { authMiddleware } = require('../middleware/auth');
 const { normalizeKey, cleanDisplayValue, getLogicalLocation, isFingertipLocation } = require('../lib/normalize');
+const { calculateThresholdEvents, calculatePmHitTotals, summarizeEvents } = require('../lib/thresholds');
 
 // ─── Build filters with ISO-class-aware hit_details filtering ─────────────────
 // When iso_class filter is active, it filters at the hit_details level (not record level).
@@ -44,34 +45,52 @@ function buildFilters(query) {
 router.get('/kpi', authMiddleware, async (req, res) => {
   try {
     const { where, isoFilter, params } = buildFilters(req.query);
-    const sql = `
+
+    // Step 1: Get aggregate hit totals (fast SQL)
+    const sqlAgg = `
       SELECT
-        COALESCE(SUM(hd.hit_value),0)::int                                          AS total_hits,
+        COALESCE(SUM(hd.hit_value),0)::int AS total_hits,
         COALESCE(SUM(CASE WHEN hd.iso_class='ISO 5' THEN hd.hit_value ELSE 0 END),0)::int AS iso5_hits,
         COALESCE(SUM(CASE WHEN hd.iso_class='ISO 7' THEN hd.hit_value ELSE 0 END),0)::int AS iso7_hits,
-        COUNT(DISTINCT r.id)::int                                                   AS total_records,
-        COUNT(DISTINCT COALESCE(r.name_key, LOWER(TRIM(r.name))))::int              AS unique_persons,
-        COUNT(DISTINCT COALESCE(r.lot_number_key, LOWER(TRIM(r.lot_number))) || '_' || r.date_of_batch)::int  AS batches_tracked,
-        COUNT(DISTINCT CASE
-          WHEN EXISTS(
-            SELECT 1 FROM hit_details hd2
-            WHERE hd2.record_id = r.id
-              AND hd2.hit_value > 0
-              AND hd2.hit_value >= hd2.alert_level
-              AND hd2.hit_value < hd2.action_level
-          ) THEN r.id END)::int                                                     AS alert_count,
-        COUNT(DISTINCT CASE
-          WHEN EXISTS(
-            SELECT 1 FROM hit_details hd2
-            WHERE hd2.record_id = r.id
-              AND hd2.hit_value >= hd2.action_level
-          ) THEN r.id END)::int                                                     AS action_count
+        COUNT(DISTINCT r.id)::int AS total_records,
+        COUNT(DISTINCT COALESCE(r.name_key, LOWER(TRIM(r.name))))::int AS unique_persons,
+        COUNT(DISTINCT COALESCE(r.lot_number_key, LOWER(TRIM(r.lot_number))) || '_' || r.date_of_batch)::int AS batches_tracked
       FROM records r
       LEFT JOIN hit_details hd ON hd.record_id = r.id${isoFilter}
       ${where}
     `;
-    const result = await pool.query(sql, params);
-    res.json(result.rows[0]);
+    const aggResult = await pool.query(sqlAgg, params);
+
+    // Step 2: Fetch records with hit_details for threshold event calculation
+    const sqlRecs = `
+      SELECT r.id, r.name, r.lot_number, r.date_of_batch, r.personnel_type, r.iso_class,
+        COALESCE(json_agg(json_build_object(
+          'location', hd.location, 'iso_class', hd.iso_class,
+          'hit_value', hd.hit_value, 'alert_level', hd.alert_level, 'action_level', hd.action_level
+        )) FILTER (WHERE hd.id IS NOT NULL), '[]') AS hit_details
+      FROM records r
+      LEFT JOIN hit_details hd ON hd.record_id = r.id
+      ${where}
+      GROUP BY r.id
+    `;
+    const recsResult = await pool.query(sqlRecs, params);
+
+    // Step 3: Run threshold engine on each record → sum events
+    let alertCount = 0;
+    let actionCount = 0;
+    for (const rec of recsResult.rows) {
+      const hd = typeof rec.hit_details === 'string' ? JSON.parse(rec.hit_details) : rec.hit_details;
+      const events = calculateThresholdEvents(rec, hd);
+      const summary = summarizeEvents(events);
+      alertCount += summary.alertCount;
+      actionCount += summary.actionCount;
+    }
+
+    res.json({
+      ...aggResult.rows[0],
+      alert_count: alertCount,
+      action_count: actionCount,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
@@ -466,6 +485,84 @@ router.get('/drill-down', authMiddleware, async (req, res) => {
         date_to: date_to || null,
       },
     });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// GET /api/analytics/threshold-events — All derived threshold events
+// Returns every ALERT and ACTION event for the filtered date range.
+// Used by drill-downs, charts, and exports that need event-level detail.
+router.get('/threshold-events', authMiddleware, async (req, res) => {
+  try {
+    const { where, params } = buildFilters(req.query);
+    const sql = `
+      SELECT r.id, r.name, r.lot_number, r.date_of_batch, r.personnel_type, r.iso_class,
+        r.name_key, r.lot_number_key,
+        COALESCE(json_agg(json_build_object(
+          'location', hd.location, 'iso_class', hd.iso_class,
+          'hit_value', hd.hit_value, 'alert_level', hd.alert_level, 'action_level', hd.action_level
+        )) FILTER (WHERE hd.id IS NOT NULL), '[]') AS hit_details
+      FROM records r
+      LEFT JOIN hit_details hd ON hd.record_id = r.id
+      ${where}
+      GROUP BY r.id
+      ORDER BY r.date_of_batch DESC
+    `;
+    const result = await pool.query(sql, params);
+
+    const allEvents = [];
+    for (const rec of result.rows) {
+      const hd = typeof rec.hit_details === 'string' ? JSON.parse(rec.hit_details) : rec.hit_details;
+      const events = calculateThresholdEvents(rec, hd);
+      allEvents.push(...events);
+    }
+
+    res.json(allEvents);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// GET /api/analytics/by-person-events — Personnel ranking by threshold events
+// Returns event-level counts per person (not COUNT DISTINCT person).
+router.get('/by-person-events', authMiddleware, async (req, res) => {
+  try {
+    const { where, params } = buildFilters(req.query);
+    const sql = `
+      SELECT r.id, r.name, r.lot_number, r.date_of_batch, r.personnel_type, r.iso_class,
+        r.name_key,
+        COALESCE(json_agg(json_build_object(
+          'location', hd.location, 'iso_class', hd.iso_class,
+          'hit_value', hd.hit_value, 'alert_level', hd.alert_level, 'action_level', hd.action_level
+        )) FILTER (WHERE hd.id IS NOT NULL), '[]') AS hit_details
+      FROM records r
+      LEFT JOIN hit_details hd ON hd.record_id = r.id
+      ${where}
+      GROUP BY r.id
+    `;
+    const result = await pool.query(sql, params);
+
+    // Aggregate events by person (name_key)
+    const personMap = new Map();
+    for (const rec of result.rows) {
+      const hd = typeof rec.hit_details === 'string' ? JSON.parse(rec.hit_details) : rec.hit_details;
+      const events = calculateThresholdEvents(rec, hd);
+      const key = rec.name_key || rec.name.trim().toLowerCase();
+      if (!personMap.has(key)) {
+        personMap.set(key, { name: rec.name, name_key: key, personnel_type: rec.personnel_type, alert_events: 0, action_events: 0 });
+      }
+      const person = personMap.get(key);
+      for (const e of events) {
+        if (e.severity === 'ALERT') person.alert_events++;
+        else if (e.severity === 'ACTION') person.action_events++;
+      }
+    }
+
+    const persons = [...personMap.values()].sort((a, b) => (b.action_events + b.alert_events) - (a.action_events + a.alert_events));
+    res.json(persons);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
