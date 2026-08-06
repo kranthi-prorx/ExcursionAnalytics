@@ -76,14 +76,17 @@ function PersonnelSummary({ records }: { records: ExcursionRecord[] }) {
   );
 }
 
-// ─── Combined Fingertip Status Banner ─────────────────────────────────────────
+// ─── Combined Fingertip Status Banner — ISO 7 only ───────────────────────────
+// ISO 5 fingertips are independent (no combined display).
 function FingertipBanner({ hitDetails }: { hitDetails: Array<{ location: string; hit_value: number; iso_class: string }> }) {
   const results = getCombinedFingertipStatus(hitDetails);
-  if (results.length === 0) return null;
+  // Only show combined for ISO 7 — ISO 5 fingertips are independent
+  const iso7Results = results.filter(r => r.isoClass === 'ISO 7');
+  if (iso7Results.length === 0) return null;
 
   return (
     <>
-      {results.map(result => (
+      {iso7Results.map(result => (
         <div key={result.isoClass} className={clsx(
           'rounded-xl p-3 border text-xs',
           result.status === 'exceeded'
@@ -93,14 +96,14 @@ function FingertipBanner({ hitDetails }: { hitDetails: Array<{ location: string;
           <div className="flex items-center justify-between mb-1">
             <span className="font-semibold">Fingertips — {result.isoClass} (Combined)</span>
             <span className={clsx('badge', result.status === 'exceeded' ? 'badge-hit' : 'badge-no-hit')}>
-              {result.status === 'exceeded' ? `⚠ ${result.thresholdLabel}` : 'OK'}
+              {result.status === 'exceeded' ? '⚠ Action' : 'OK'}
             </span>
           </div>
           <div className="flex items-center gap-3">
             <span>L: {result.leftHits}</span>
             <span>R: {result.rightHits}</span>
             <span className="font-bold">Combined: {result.combinedHits}</span>
-            <span className="text-surface-400">({result.thresholdLabel} &gt; {result.actionThreshold})</span>
+            <span className="text-surface-400">(Action &gt; {result.actionThreshold})</span>
           </div>
         </div>
       ))}

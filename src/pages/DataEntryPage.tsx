@@ -607,17 +607,19 @@ export default function DataEntryPage() {
                 </div>
               </div>
 
-              {/* Combined fingertip summary in review */}
+              {/* Combined fingertip summary in review — ISO 7 only */}
+              {/* ISO 5 fingertips are independent — no combined display */}
               {(() => {
                 const hd = (values.hit_details ?? []).map(h => ({
                   location: h.location, hit_value: h.hit_value || 0, iso_class: h.iso_class,
                 }));
                 const results = getCombinedFingertipStatus(hd);
-                if (results.length === 0) return null;
+                const iso7Results = results.filter(r => r.isoClass === 'ISO 7');
+                if (iso7Results.length === 0) return null;
                 return (
                   <div className="space-y-2">
                     <p className="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-widest">Combined Fingertips</p>
-                    {results.map(r => (
+                    {iso7Results.map(r => (
                       <div key={r.isoClass} className={clsx(
                         'rounded-xl p-3 border text-xs',
                         r.status === 'exceeded'
@@ -627,14 +629,14 @@ export default function DataEntryPage() {
                         <div className="flex items-center justify-between">
                           <span className="font-semibold">Fingertips — {r.isoClass}</span>
                           <span className={clsx('badge', r.status === 'exceeded' ? 'badge-hit' : 'badge-no-hit')}>
-                            {r.status === 'exceeded' ? `⚠ ${r.thresholdLabel}` : 'OK'}
+                            {r.status === 'exceeded' ? '⚠ Action' : 'OK'}
                           </span>
                         </div>
                         <div className="flex items-center gap-3 mt-1">
                           <span>L: {r.leftHits}</span>
                           <span>R: {r.rightHits}</span>
                           <span className="font-bold">Combined: {r.combinedHits}</span>
-                          <span className="text-surface-400">({r.thresholdLabel} &gt; {r.actionThreshold})</span>
+                          <span className="text-surface-400">(Action &gt; {r.actionThreshold})</span>
                         </div>
                       </div>
                     ))}
