@@ -133,24 +133,63 @@ router.post('/', authMiddleware, async (req, res) => {
 
 // PUT /api/records/:id
 router.put('/:id', authMiddleware, requireRole('admin', 'manager', 'user'), async (req, res) => {
-  const { name, lot_number, job_function, personnel_type, iso_class, alert_level, action_level } = req.body;
+  const { name, lot_number, job_function, personnel_type, iso_class, alert_level, action_level, hit_details } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const nameKey = normalizeKey(name); const lotKey = normalizeKey(lot_number);
     const cleanName = cleanDisplayValue(name); const cleanLot = cleanDisplayValue(lot_number);
-    const before = await client.query('SELECT * FROM records WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
+    const before = await client.query(
+      `SELECT r.*, COALESCE(json_agg(json_build_object(
+        'id',hd.id,'location',hd.location,'iso_class',hd.iso_class,
+        'hit_value',hd.hit_value,'alert_level',hd.alert_level,'action_level',hd.action_level
+      ) ORDER BY hd.location) FILTER (WHERE hd.id IS NOT NULL),'[]') AS hit_details
+      FROM records r LEFT JOIN hit_details hd ON hd.record_id = r.id
+      WHERE r.id = $1 AND r.deleted_at IS NULL GROUP BY r.id`,
+      [req.params.id]
+    );
     if (!before.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Record not found' }); }
     const result = await client.query(
       'UPDATE records SET name=$1,lot_number=$2,job_function=$3,personnel_type=$4,iso_class=$5,alert_level=$6,action_level=$7,name_key=$8,lot_number_key=$9 WHERE id=$10 RETURNING *',
       [cleanName, cleanLot, job_function, personnel_type, iso_class, alert_level, action_level, nameKey, lotKey, req.params.id]
     );
-    const afterValues = result.rows[0];
+
+    // Update hit_details if provided
+    if (Array.isArray(hit_details)) {
+      for (const hd of hit_details) {
+        if (hd.id) {
+          // Update existing hit_detail by ID
+          await client.query(
+            'UPDATE hit_details SET hit_value=$1, alert_level=$2, action_level=$3 WHERE id=$4 AND record_id=$5',
+            [parseInt(hd.hit_value) || 0, parseInt(hd.alert_level) || 0, parseInt(hd.action_level) || 4, hd.id, req.params.id]
+          );
+        } else if (hd.location) {
+          // Update by location match (fallback)
+          await client.query(
+            'UPDATE hit_details SET hit_value=$1, alert_level=$2, action_level=$3 WHERE record_id=$4 AND location=$5',
+            [parseInt(hd.hit_value) || 0, parseInt(hd.alert_level) || 0, parseInt(hd.action_level) || 4, req.params.id, hd.location]
+          );
+        }
+      }
+    }
+
+    // Re-fetch the full record with updated hit_details for response
+    const fullRecord = await client.query(
+      `SELECT r.*, COALESCE(json_agg(json_build_object(
+        'id',hd.id,'location',hd.location,'iso_class',hd.iso_class,
+        'hit_value',hd.hit_value,'alert_level',hd.alert_level,'action_level',hd.action_level
+      ) ORDER BY hd.location) FILTER (WHERE hd.id IS NOT NULL),'[]') AS hit_details,
+      COALESCE(SUM(hd.hit_value),0)::int AS total_hits
+      FROM records r LEFT JOIN hit_details hd ON hd.record_id = r.id
+      WHERE r.id = $1 GROUP BY r.id`,
+      [req.params.id]
+    );
+    const afterValues = fullRecord.rows[0];
     const changedFields = Object.keys(afterValues).filter(k => JSON.stringify(before.rows[0][k]) !== JSON.stringify(afterValues[k]));
     await recordAuditEvent({ client, actionType: 'UPDATE', entityType: 'pm_record', entityId: req.params.id, actor: req.user, beforeValues: before.rows[0], afterValues, changedFields, personnelName: cleanName, batchNumber: cleanLot, dateOfBatch: afterValues.date_of_batch });
     await client.query('COMMIT');
-    res.json(afterValues);
-  } catch (err) { await client.query('ROLLBACK'); res.status(500).json({ message: 'Server error' }); }
+    res.json(formatRow(afterValues));
+  } catch (err) { await client.query('ROLLBACK'); console.error(err); res.status(500).json({ message: 'Server error' }); }
   finally { client.release(); }
 });
 

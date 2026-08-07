@@ -45,9 +45,29 @@ function PMForm({ record, onSaved, onClose }: { record: ExcursionRecord; onSaved
     alert_level: String(record.alert_level ?? 0),
     action_level: String(record.action_level ?? 0),
   });
+  // Initialize hit_details from the record
+  const [hitDetails, setHitDetails] = useState<Array<{
+    id?: string | number; location: string; iso_class: string;
+    hit_value: number; alert_level: number; action_level: number;
+  }>>(
+    (record.hit_details ?? []).map(hd => ({
+      id: hd.id,
+      location: hd.location,
+      iso_class: hd.iso_class ?? 'ISO 7',
+      hit_value: hd.hit_value ?? 0,
+      alert_level: hd.alert_level ?? 0,
+      action_level: hd.action_level ?? 4,
+    }))
+  );
   const [saving, setSaving] = useState(false);
 
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
+
+  const setHitValue = (idx: number, value: number) => {
+    setHitDetails(hd => hd.map((h, i) => i === idx ? { ...h, hit_value: value } : h));
+  };
+
+  const totalHits = hitDetails.reduce((sum, h) => sum + (h.hit_value ?? 0), 0);
 
   const save = async () => {
     setSaving(true);
@@ -56,7 +76,8 @@ function PMForm({ record, onSaved, onClose }: { record: ExcursionRecord; onSaved
         ...form,
         alert_level: Number(form.alert_level),
         action_level: Number(form.action_level),
-      });
+        hit_details: hitDetails,
+      } as any);
       // Invalidate shared caches so all sessions see the updated record.
       queryCache.invalidate('dashboard:');
       queryCache.invalidate('analytics:');
@@ -68,19 +89,74 @@ function PMForm({ record, onSaved, onClose }: { record: ExcursionRecord; onSaved
   };
 
   return (
-    <div className="grid grid-cols-2 gap-4">
-      <Field label="Name"><input className="input" value={form.name} onChange={e => set('name', e.target.value)} /></Field>
-      <Field label="Lot Number"><input className="input font-mono" value={form.lot_number} onChange={e => set('lot_number', e.target.value)} /></Field>
-      <Field label="Job Function"><input className="input" value={form.job_function} onChange={e => set('job_function', e.target.value)} /></Field>
-      <Field label="Personnel Type"><input className="input" value={form.personnel_type} onChange={e => set('personnel_type', e.target.value)} /></Field>
-      <Field label="ISO Class">
-        <select className="input" value={form.iso_class} onChange={e => set('iso_class', e.target.value)}>
-          {ISO_CLASSES.map(c => <option key={c}>{c}</option>)}
-        </select>
-      </Field>
-      <Field label="Alert Level"><input type="number" className="input" value={form.alert_level} onChange={e => set('alert_level', e.target.value)} /></Field>
-      <Field label="Action Level"><input type="number" className="input" value={form.action_level} onChange={e => set('action_level', e.target.value)} /></Field>
-      <div className="col-span-2 flex justify-end gap-2 pt-2">
+    <div className="space-y-4">
+      {/* Metadata fields */}
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Name"><input className="input" value={form.name} onChange={e => set('name', e.target.value)} /></Field>
+        <Field label="Lot Number"><input className="input font-mono" value={form.lot_number} onChange={e => set('lot_number', e.target.value)} /></Field>
+        <Field label="Personnel Type"><input className="input" value={form.personnel_type} onChange={e => set('personnel_type', e.target.value)} /></Field>
+        <Field label="ISO Class">
+          <select className="input" value={form.iso_class} onChange={e => set('iso_class', e.target.value)}>
+            {ISO_CLASSES.map(c => <option key={c}>{c}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      {/* Hit Details Section */}
+      {hitDetails.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wide">Hit Values by Location</span>
+            <span className={clsx(
+              'text-xs font-bold px-2.5 py-0.5 rounded-full',
+              totalHits > 0
+                ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'
+                : 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
+            )}>
+              Total: {totalHits} hit{totalHits !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {hitDetails.map((hd, idx) => (
+              <div key={hd.location} className={clsx(
+                'rounded-xl border p-3 transition-all',
+                hd.hit_value > 0 && hd.hit_value >= hd.action_level
+                  ? 'border-red-300 dark:border-red-700 bg-red-50/50 dark:bg-red-900/10'
+                  : hd.hit_value > 0 && hd.hit_value >= hd.alert_level
+                    ? 'border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-900/10'
+                    : 'border-surface-200 dark:border-surface-700 bg-surface-50/30 dark:bg-surface-800/30'
+              )}>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-semibold text-surface-700 dark:text-surface-300">{hd.location}</span>
+                  <span className={hd.iso_class === 'ISO 5' ? 'badge-iso5 text-[9px]' : 'badge-iso7 text-[9px]'}>{hd.iso_class}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setHitValue(idx, Math.max(0, hd.hit_value - 1))}
+                    className="w-7 h-7 rounded-lg bg-surface-100 dark:bg-surface-700 text-surface-600 dark:text-surface-300 hover:bg-surface-200 dark:hover:bg-surface-600 flex items-center justify-center text-sm font-bold transition-colors"
+                  >−</button>
+                  <input
+                    type="number"
+                    min={0}
+                    value={hd.hit_value}
+                    onChange={e => setHitValue(idx, Math.max(0, parseInt(e.target.value) || 0))}
+                    className="input text-center w-16 font-mono text-sm py-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setHitValue(idx, hd.hit_value + 1)}
+                    className="w-7 h-7 rounded-lg bg-surface-100 dark:bg-surface-700 text-surface-600 dark:text-surface-300 hover:bg-surface-200 dark:hover:bg-surface-600 flex items-center justify-center text-sm font-bold transition-colors"
+                  >+</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div className="flex justify-end gap-2 pt-2 border-t border-surface-100 dark:border-surface-800">
         <button onClick={onClose} className="btn-secondary btn-sm">Cancel</button>
         <button onClick={save} disabled={saving} className="btn-primary btn-sm flex items-center gap-2">
           {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save Changes
@@ -234,7 +310,10 @@ export default function EditRecordModal({ target, onClose, onSaved }: Props) {
 
       {/* Dialog */}
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
-        <div className="pointer-events-auto w-full max-w-xl bg-white dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-100 dark:border-surface-800 animate-fade-in">
+        <div className={clsx(
+          'pointer-events-auto w-full bg-white dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-100 dark:border-surface-800 animate-fade-in max-h-[90vh] flex flex-col',
+          target.type === 'pm' ? 'max-w-2xl' : 'max-w-xl'
+        )}>
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-surface-100 dark:border-surface-800">
             <div>
@@ -247,7 +326,7 @@ export default function EditRecordModal({ target, onClose, onSaved }: Props) {
           </div>
 
           {/* Form body */}
-          <div className="px-6 py-5">
+          <div className="px-6 py-5 overflow-y-auto">
             {target.type === 'pm'      && <PMForm      record={target.record} onSaved={u => onSaved('pm', u)}      onClose={onClose} />}
             {target.type === 'viable'  && <ViableForm  record={target.record} onSaved={u => onSaved('viable', u)}  onClose={onClose} />}
             {target.type === 'surface' && <SurfaceForm record={target.record} onSaved={u => onSaved('surface', u)} onClose={onClose} />}
