@@ -132,7 +132,7 @@ router.post('/', authMiddleware, async (req, res) => {
 });
 
 // PUT /api/records/:id
-router.put('/:id', authMiddleware, requireRole('admin', 'manager'), async (req, res) => {
+router.put('/:id', authMiddleware, requireRole('admin', 'manager', 'user'), async (req, res) => {
   const { name, lot_number, job_function, personnel_type, iso_class, alert_level, action_level } = req.body;
   const client = await pool.connect();
   try {
