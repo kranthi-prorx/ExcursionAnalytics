@@ -437,16 +437,6 @@ export default function DashboardPage() {
         <ChartCard id="chart-heatmap" title="Location Hit Heatmap" icon={Grid} className="col-span-1 lg:col-span-2">
           {loading ? <Skeleton className="h-28" /> : <HeatmapChart data={locations} />}
         </ChartCard>
-
-        {/* Viable CFU by Lot */}
-        <ChartCard id="chart-viable-cfu" title="Viable CFU by Lot" icon={Shield}>
-          {loading ? <Skeleton className="h-[280px]" /> : <ViableCFUChart data={viableByLot} onBarClick={setViableLot} />}
-        </ChartCard>
-
-        {/* Particle Count by Lot */}
-        <ChartCard id="chart-particle" title="Particle Count by Lot" icon={Package}>
-          {loading ? <Skeleton className="h-[280px]" /> : <ParticleCountChart data={viableByLot} onBarClick={setViableLot} />}
-        </ChartCard>
       </div>
 
       {/* Drill-down drawer */}

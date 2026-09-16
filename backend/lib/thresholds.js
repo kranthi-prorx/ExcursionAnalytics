@@ -272,7 +272,115 @@ function summarizeEvents(events) {
   return { alertCount, actionCount };
 }
 
+// ─── Environmental Monitoring Thresholds ──────────────────────────────────────
+// SINGLE SOURCE OF TRUTH for all environmental monitoring thresholds.
+// All boundaries are INCLUSIVE (>=) as confirmed by Quality (Option A).
+// Backend derives status; frontend may display these values but never submits status.
+//
+// Viable Air CFU:
+//   ISO 5: Normal 0 CFU; Action >= 1. No Alert level.
+//   ISO 7: Normal 0-4; Alert 5-9; Action >= 10.
+//   ISO 8: Normal 0-49; Alert 50-99; Action >= 100.
+//
+// Surface CFU:
+//   ISO 5: Normal 0; Action >= 1. No Alert level.
+//   ISO 7: Normal 0-2; Alert 3-4; Action >= 5.
+//   ISO 8: Normal 0-24; Alert 25-49; Action >= 50.
+//
+// Nonviable Air — 0.5 µm (particles/m³):
+//   ISO 5: Alert >= 3,000; Action >= 3,520.
+//   ISO 7: Alert >= 300,000; Action >= 352,000.
+//   ISO 8: Alert >= 3,000,000; Action >= 3,520,000.
+//
+// Nonviable Air — 5.0 µm (particles/m³):
+//   ISO 5: Alert >= 20; Action >= 29.
+//   ISO 7: Alert >= 2,000; Action >= 2,930.
+//   ISO 8: Alert >= 20,000; Action >= 29,300.
+
+const ENV_MONITORING_THRESHOLDS = {
+  viable_air: {
+    'ISO 5': { alert: null, action: 1 },      // No alert; action >= 1
+    'ISO 7': { alert: 5,    action: 10 },     // alert >= 5; action >= 10
+    'ISO 8': { alert: 50,   action: 100 },    // alert >= 50; action >= 100
+  },
+  surface: {
+    'ISO 5': { alert: null, action: 1 },      // No alert; action >= 1
+    'ISO 7': { alert: 3,    action: 5 },      // alert >= 3; action >= 5
+    'ISO 8': { alert: 25,   action: 50 },     // alert >= 25; action >= 50
+  },
+  nonviable_0_5: {
+    'ISO 5': { alert: 3_000,       action: 3_520       },
+    'ISO 7': { alert: 300_000,     action: 352_000     },
+    'ISO 8': { alert: 3_000_000,   action: 3_520_000   },
+  },
+  nonviable_5_0: {
+    'ISO 5': { alert: 20,    action: 29     },
+    'ISO 7': { alert: 2_000, action: 2_930  },
+    'ISO 8': { alert: 20_000, action: 29_300 },
+  },
+};
+
+/**
+ * Derive status for a Viable Air CFU measurement.
+ * @param {number|null} cfu
+ * @param {'ISO 5'|'ISO 7'|'ISO 8'} isoClass
+ * @returns {'NORMAL'|'ALERT'|'ACTION'|null} null when cfu is null/missing
+ */
+function evaluateViableCfuStatus(cfu, isoClass) {
+  if (cfu === null || cfu === undefined) return null;
+  const t = ENV_MONITORING_THRESHOLDS.viable_air[isoClass];
+  if (!t) return null;
+  if (cfu >= t.action) return 'ACTION';
+  if (t.alert !== null && cfu >= t.alert) return 'ALERT';
+  return 'NORMAL';
+}
+
+/**
+ * Derive status for a Surface CFU measurement.
+ * @param {number|null} cfu
+ * @param {'ISO 5'|'ISO 7'|'ISO 8'} isoClass
+ * @returns {'NORMAL'|'ALERT'|'ACTION'|null}
+ */
+function evaluateSurfaceCfuStatus(cfu, isoClass) {
+  if (cfu === null || cfu === undefined) return null;
+  const t = ENV_MONITORING_THRESHOLDS.surface[isoClass];
+  if (!t) return null;
+  if (cfu >= t.action) return 'ACTION';
+  if (t.alert !== null && cfu >= t.alert) return 'ALERT';
+  return 'NORMAL';
+}
+
+/**
+ * Derive status for a Nonviable Air particle measurement.
+ * @param {number|null} value
+ * @param {'ISO 5'|'ISO 7'|'ISO 8'} isoClass
+ * @param {'0_5'|'5_0'} particleSize  — '0_5' for 0.5µm, '5_0' for 5.0µm
+ * @returns {'NORMAL'|'ALERT'|'ACTION'|null}
+ */
+function evaluateParticleStatus(value, isoClass, particleSize) {
+  if (value === null || value === undefined) return null;
+  const key = particleSize === '0_5' ? 'nonviable_0_5' : 'nonviable_5_0';
+  const t = ENV_MONITORING_THRESHOLDS[key][isoClass];
+  if (!t) return null;
+  if (value >= t.action) return 'ACTION';
+  if (value >= t.alert)  return 'ALERT';
+  return 'NORMAL';
+}
+
+/**
+ * Derive the worst (highest severity) status from an array of status values.
+ * @param {Array<string|null>} statuses
+ * @returns {'NORMAL'|'ALERT'|'ACTION'|null}
+ */
+function worstStatus(statuses) {
+  if (statuses.every(s => s === null)) return null;
+  if (statuses.includes('ACTION')) return 'ACTION';
+  if (statuses.includes('ALERT'))  return 'ALERT';
+  return 'NORMAL';
+}
+
 module.exports = {
+  // ── PM Monitoring (existing, unchanged) ──
   calculateThresholdEvents,
   calculatePmHitTotals,
   summarizeEvents,
@@ -282,4 +390,10 @@ module.exports = {
   findHitValue,
   FINGERTIP_LEFT_NORM,
   FINGERTIP_RIGHT_NORM,
+  // ── Environmental Monitoring (new) ──
+  ENV_MONITORING_THRESHOLDS,
+  evaluateViableCfuStatus,
+  evaluateSurfaceCfuStatus,
+  evaluateParticleStatus,
+  worstStatus,
 };

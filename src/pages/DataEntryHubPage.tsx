@@ -18,9 +18,9 @@ const OPTIONS = [
   {
     id: 'viable',
     title: 'Viable & Non-Viable',
-    subtitle: 'Data Entry',
+    subtitle: 'Air Monitoring',
     description:
-      'Enter environmental monitoring results including ISO 5/7 CFU counts and 0.5 μm / 5.0 μm airborne particle concentrations per lot.',
+      'Record batch, routine monthly, or other viable air (CFU) and non-viable air (0.5 μm / 5.0 μm particles) results across ISO 5, 7, and 8 areas.',
     icon: Microscope,
     color: 'from-emerald-500 to-teal-700',
     bg: 'hover:border-emerald-300 dark:hover:border-emerald-700',
@@ -31,9 +31,9 @@ const OPTIONS = [
   {
     id: 'surface',
     title: 'Surface Sampling',
-    subtitle: 'Data Entry',
+    subtitle: 'Surface Monitoring',
     description:
-      'Log surface swab / contact plate results by sample point, ISO class, CFU count, and organism identification for environmental monitoring.',
+      'Log batch, routine weekly, or other surface swab / contact plate CFU results by sample point, ISO class, and organism identification.',
     icon: FlaskConical,
     color: 'from-sky-500 to-blue-700',
     bg: 'hover:border-sky-300 dark:hover:border-sky-700',
@@ -42,6 +42,7 @@ const OPTIONS = [
     path: '/data-entry/surface',
   },
 ];
+
 
 export default function DataEntryHubPage() {
   const navigate = useNavigate();

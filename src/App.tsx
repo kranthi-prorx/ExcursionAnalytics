@@ -9,15 +9,18 @@ import LoginPage from './pages/LoginPage';
 import './index.css';
 
 // Lazy-load all protected pages — each page's JS is only downloaded on first visit
-const DashboardPage       = lazy(() => import('./pages/DashboardPage'));
-const DataEntryHubPage    = lazy(() => import('./pages/DataEntryHubPage'));
-const DataEntryPage       = lazy(() => import('./pages/DataEntryPage'));
-const ViableDataEntryPage = lazy(() => import('./pages/ViableDataEntryPage'));
-const SurfaceSamplingPage = lazy(() => import('./pages/SurfaceSamplingPage'));
-const RecordsPage         = lazy(() => import('./pages/RecordsPage'));
-const AnalyticsPage       = lazy(() => import('./pages/AnalyticsPage'));
-const UsersPage           = lazy(() => import('./pages/UsersPage'));
-const AuditLogsPage       = lazy(() => import('./pages/AuditLogsPage'));
+const DashboardPage           = lazy(() => import('./pages/DashboardPage'));
+const DataEntryHubPage        = lazy(() => import('./pages/DataEntryHubPage'));
+const DataEntryPage           = lazy(() => import('./pages/DataEntryPage'));
+const ViableDataEntryPage     = lazy(() => import('./pages/ViableDataEntryPage'));
+const SurfaceSamplingPage     = lazy(() => import('./pages/SurfaceSamplingPage'));
+const RecordsPage             = lazy(() => import('./pages/RecordsPage'));
+const AnalyticsPage           = lazy(() => import('./pages/AnalyticsPage'));
+const UsersPage               = lazy(() => import('./pages/UsersPage'));
+const AuditLogsPage           = lazy(() => import('./pages/AuditLogsPage'));
+// Environmental Monitoring pages
+const EnvLocationProfilesPage = lazy(() => import('./pages/EnvLocationProfilesPage'));
+const EnvAnalyticsPage        = lazy(() => import('./pages/EnvAnalyticsPage'));
 
 export default function App() {
   return (
@@ -37,8 +40,16 @@ export default function App() {
                 <Route path="/data-entry/pm-excursion" element={<DataEntryPage />} />
                 <Route path="/data-entry/viable"       element={<ViableDataEntryPage />} />
                 <Route path="/data-entry/surface"      element={<SurfaceSamplingPage />} />
+                {/* Environmental Monitoring analytics + profiles (no separate data-entry route) */}
+                <Route path="/data-entry/environmental"  element={<Navigate to="/data-entry" replace />} />
+                <Route path="/env/analytics"             element={<EnvAnalyticsPage />} />
                 <Route path="/records"    element={<RecordsPage />} />
                 <Route path="/analytics"  element={<AnalyticsPage />} />
+
+                {/* Admin + Manager: Location Profile Management */}
+                <Route element={<ProtectedRoute allowedRoles={['admin', 'manager']} />}>
+                  <Route path="/env/location-profiles" element={<EnvLocationProfilesPage />} />
+                </Route>
 
                 {/* Admin only */}
                 <Route element={<ProtectedRoute allowedRoles={['admin']} />}>

@@ -254,3 +254,216 @@ export interface PersonEventCount {
   alert_events: number;
   action_events: number;
 }
+
+// ─── Environmental Monitoring Types ──────────────────────────────────────────
+
+export type MonitoringContext = 'BATCH' | 'ROUTINE_MONTHLY' | 'ROUTINE_WEEKLY' | 'OTHER';
+export type EnvSampleType     = 'VIABLE_AIR' | 'NONVIABLE_AIR' | 'SURFACE';
+export type EnvISOClass       = 'ISO 5' | 'ISO 7' | 'ISO 8';
+export type EnvSampleStatus   = 'NORMAL' | 'ALERT' | 'ACTION';
+export type CompletionStatus  = 'COMPLETE' | 'INCOMPLETE';
+
+export const MONITORING_CONTEXT_LABELS: Record<MonitoringContext, string> = {
+  BATCH:           'Batch Monitoring',
+  ROUTINE_MONTHLY: 'Routine Monthly Monitoring',
+  ROUTINE_WEEKLY:  'Routine Weekly Monitoring',
+  OTHER:           'Other',
+};
+
+export const ENV_SAMPLE_TYPE_LABELS: Record<EnvSampleType, string> = {
+  VIABLE_AIR:   'Viable Air',
+  NONVIABLE_AIR: 'Non-Viable Air',
+  SURFACE:      'Surface',
+};
+
+export const AIR_CONTEXTS: MonitoringContext[] = ['BATCH', 'ROUTINE_MONTHLY', 'OTHER'];
+export const SURFACE_CONTEXTS: MonitoringContext[] = ['BATCH', 'ROUTINE_WEEKLY', 'OTHER'];
+export const ENV_ISO_CLASSES: EnvISOClass[] = ['ISO 5', 'ISO 7', 'ISO 8'];
+export const BATCH_AIR_ISO_CLASSES: EnvISOClass[] = ['ISO 5', 'ISO 7']; // ISO 8 not for batch air
+
+export interface EnvLocationProfile {
+  id: string;
+  location_code: string;
+  location_code_key: string;
+  display_name: string;
+  room_or_area: string;
+  iso_class: EnvISOClass;
+  allowed_sample_types: EnvSampleType[];
+  allowed_contexts: MonitoringContext[];
+  frequency: string | null;
+  active: boolean;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_by: string | null;
+  updated_at: string;
+  created_by_name?: string;
+  updated_by_name?: string;
+}
+
+export interface EnvMonitoringSession {
+  id: string;
+  monitoring_date: string;       // YYYY-MM-DD
+  monitoring_context: MonitoringContext;
+  room_or_area: string | null;
+  batch_id: string | null;       // FK to lot_profiles.id
+  lot_number?: string;           // joined from lot_profiles.display_lot
+  lot_key?: string;
+  custom_reason: string | null;
+  completion_status: CompletionStatus;
+  missing_requirements: string[] | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_by: string | null;
+  updated_at: string;
+  deleted_at: string | null;
+  created_by_name?: string;
+  sample_count?: number;
+  alert_count?: number;
+  action_count?: number;
+  samples?: EnvSample[];
+}
+
+export interface EnvSample {
+  id: string;
+  session_id: string;
+  location_profile_id: string | null;
+  sample_location_text: string | null;
+  sample_type: EnvSampleType;
+  iso_class: EnvISOClass;
+  viable_cfu: number | null;       // null = not collected — never zero-filled
+  surface_cfu: number | null;
+  particle_count_0_5: number | null;
+  particle_count_5_0: number | null;
+  status_viable: EnvSampleStatus | null;
+  status_0_5: EnvSampleStatus | null;
+  status_5_0: EnvSampleStatus | null;
+  status: EnvSampleStatus | null;
+  organism_id: string | null;
+  deviation_number: string | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_by: string | null;
+  updated_at: string;
+  deleted_at: string | null;
+  // Joined fields
+  location_code?: string;
+  location_display_name?: string;
+  profile_iso_class?: string;
+  created_by_name?: string;
+}
+
+export interface EnvAnalyticsTrendPoint {
+  date: string;
+  context: MonitoringContext;
+  room_or_area: string | null;
+  completion_status: CompletionStatus;
+  missing_requirements: string[] | null;
+  sample_id: string;
+  /** Synthetic grouping key — NOT a real DB session UUID. Never use as a session PK. */
+  session_group_key: string;
+  iso_class: EnvISOClass;
+  sample_type: EnvSampleType;
+  location_profile_id: string | null;
+  location_code: string | null;
+  location_display_name: string | null;
+  lot_number: string | null;
+  batch_id: string | null;
+  created_by_name: string | null;
+  // Viable specific
+  viable_cfu?: number | null;
+  status?: EnvSampleStatus | null;
+  // Nonviable specific
+  particle_count_0_5?: number | null;
+  particle_count_5_0?: number | null;
+  status_0_5?: EnvSampleStatus | null;
+  status_5_0?: EnvSampleStatus | null;
+  // Surface specific
+  surface_cfu?: number | null;
+  organism_id?: string | null;
+}
+
+/** Detail response from GET /api/env/analytics/sample/:sampleId */
+export interface EnvSampleDetail {
+  source_table: 'viable_data' | 'surface_sampling';
+  session: null;       // always null for analytics-tracked records
+  session_note: string | null;
+  sample: {
+    id: string;
+    monitoring_date: string;
+    monitoring_context: MonitoringContext;
+    iso_class: EnvISOClass;
+    sample_type: EnvSampleType;
+    location_code: string | null;
+    location_name: string | null;
+    room_or_area: string | null;
+    lot_number: string | null;
+    batch_id: string | null;
+    location_profile_id: string | null;
+    // Measurements
+    viable_cfu: number | null;
+    particle_count_0_5: number | null;
+    particle_count_5_0: number | null;
+    surface_cfu: number | null;
+    organism_id: string | null;
+    // Status
+    status_viable: EnvSampleStatus | null;
+    status_0_5: EnvSampleStatus | null;
+    status_5_0: EnvSampleStatus | null;
+    status: EnvSampleStatus | null;
+    // Thresholds (backend-derived from constants)
+    viable_alert_threshold: number | null;
+    viable_action_threshold: number | null;
+    nonviable_0_5_thresholds: { alert: number | null; action: number } | null;
+    nonviable_5_0_thresholds: { alert: number | null; action: number } | null;
+    surface_alert_threshold: number | null;
+    surface_action_threshold: number | null;
+    // Meta
+    deviation_number: string | null;
+    notes: string | null;
+    created_by_name: string | null;
+    created_at: string;
+  };
+}
+
+export interface EnvKPISummary {
+  total_sessions: number;
+  complete_sessions: number;
+  incomplete_sessions: number;
+  total_samples: number;
+  alert_count: number;
+  action_count: number;
+  viable_air_count: number;
+  nonviable_air_count: number;
+  surface_count: number;
+}
+
+export interface EnvFilterState {
+  dateFrom: string;
+  dateTo: string;
+  context: MonitoringContext | '';
+  isoClass: EnvISOClass | '';
+  sampleType: EnvSampleType | '';
+  locationProfileId: string;
+  roomOrArea: string;
+  batchId: string;
+  completionStatus: CompletionStatus | '';
+  resultStatus: EnvSampleStatus | '';
+  createdBy: string;
+  lotNumber: string;
+}
+
+// Environmental thresholds shape (matches backend ENV_MONITORING_THRESHOLDS)
+export interface EnvThresholdSet {
+  alert: number | null;
+  action: number;
+}
+export interface EnvThresholds {
+  viable_air: Record<EnvISOClass, EnvThresholdSet>;
+  surface: Record<EnvISOClass, EnvThresholdSet>;
+  nonviable_0_5: Record<EnvISOClass, EnvThresholdSet>;
+  nonviable_5_0: Record<EnvISOClass, EnvThresholdSet>;
+}
+

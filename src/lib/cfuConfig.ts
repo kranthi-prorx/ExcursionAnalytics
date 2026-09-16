@@ -19,9 +19,11 @@ export interface CfuThreshold {
 }
 
 export const CFU_THRESHOLDS: Record<ViableISOClass, CfuThreshold> = {
-  'ISO 5': { alert: null,  action: 1,   strictGreaterThan: false },  // N/A alert; action ≥ 1
-  'ISO 7': { alert: 5,     action: 10,  strictGreaterThan: false },  // alert ≥ 5; action ≥ 10
-  'ISO 8': { alert: 50,    action: 100, strictGreaterThan: true  },  // alert > 50; action > 100
+  'ISO 5': { alert: null,  action: 1,   strictGreaterThan: false },  // N/A alert; action >= 1
+  'ISO 7': { alert: 5,     action: 10,  strictGreaterThan: false },  // alert >= 5; action >= 10
+  // ISO 8 uses INCLUSIVE >= (Quality-confirmed Option A):
+  //   >= 50 = Alert, >= 100 = Action. (Was incorrectly strict > before.)
+  'ISO 8': { alert: 50,    action: 100, strictGreaterThan: false },  // alert >= 50; action >= 100
 } as const;
 
 /**
@@ -57,8 +59,8 @@ export function getCfuThresholdLabel(isoClass: ViableISOClass): {
   const t = CFU_THRESHOLDS[isoClass];
   if (isoClass === 'ISO 8') {
     return {
-      alertLabel:  `Alert > ${t.alert} CFU`,
-      actionLabel: `Action > ${t.action} CFU`,
+      alertLabel:  `Alert ≥ ${t.alert} CFU`,
+      actionLabel: `Action ≥ ${t.action} CFU`,
     };
   }
   if (isoClass === 'ISO 5') {

@@ -27,6 +27,12 @@ app.use('/api/processed-batches',  require('./routes/processed-batches'));
 app.use('/api/profiles',           require('./routes/profiles'));
 app.use('/api/audit-logs',         require('./routes/audit-logs'));
 
+// ── Environmental Monitoring (new) ──────────────────────────────────────────
+app.use('/api/env/location-profiles', require('./routes/env-location-profiles'));
+app.use('/api/env/sessions',          require('./routes/env-sessions'));
+app.use('/api/env/samples',           require('./routes/env-samples'));
+app.use('/api/env/analytics',         require('./routes/env-analytics'));
+
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', ts: new Date() }));
 
 // Error handler

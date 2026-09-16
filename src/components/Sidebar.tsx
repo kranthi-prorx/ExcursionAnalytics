@@ -2,8 +2,9 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, FlaskConical, PlusCircle, Users,
   LogOut, Sun, Moon, Menu, X, Activity, BarChart3,
-  Shield, ChevronRight, Pencil, ScrollText,
+  Shield, ChevronRight, Pencil, ScrollText, Leaf,
 } from 'lucide-react';
+
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -15,9 +16,11 @@ const navItems = [
   { to: '/data-entry',   icon: PlusCircle,      label: 'Data Entry',  roles: ['admin','manager','user'] },
   { to: '/records',      icon: BarChart3,        label: 'Records',     roles: ['admin','manager','user'] },
   { to: '/analytics',    icon: Activity,         label: 'Analytics',   roles: ['admin','manager','user'] },
+  { to: '/env/analytics',icon: Leaf,             label: 'Env Monitor', roles: ['admin','manager','user'] },
   { to: '/users',        icon: Users,            label: 'User Mgmt',   roles: ['admin'] },
   { to: '/audit-logs',   icon: ScrollText,       label: 'Audit Logs',  roles: ['admin'] },
 ];
+
 
 export default function Sidebar() {
   const { user, logout } = useAuth();

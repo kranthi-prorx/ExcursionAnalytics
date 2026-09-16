@@ -194,4 +194,132 @@ export const auditLogsAPI = {
   getById: (id: string) => api.get<AuditLog>(`/audit-logs/${id}`),
 };
 
+// ─── Environmental Location Profiles API ──────────────────────────────────────
+import type {
+  EnvLocationProfile, EnvMonitoringSession, EnvSample,
+  EnvAnalyticsTrendPoint, EnvKPISummary, EnvThresholds, EnvSampleDetail,
+  MonitoringContext, EnvSampleType, EnvISOClass, EnvSampleStatus,
+  CompletionStatus, EnvFilterState,
+} from '../types';
+
+const buildEnvParams = (filters: Partial<EnvFilterState>): Record<string, string> => {
+  const p: Record<string, string> = {};
+  if (filters.dateFrom)          p.date_from           = filters.dateFrom;
+  if (filters.dateTo)            p.date_to             = filters.dateTo;
+  if (filters.context)           p.context             = filters.context;
+  if (filters.isoClass)          p.iso_class           = filters.isoClass;
+  if (filters.sampleType)        p.sample_type         = filters.sampleType;
+  if (filters.locationProfileId) p.location_profile_id = filters.locationProfileId;
+  if (filters.roomOrArea)        p.room_or_area        = filters.roomOrArea;
+  if (filters.batchId)           p.batch_id            = filters.batchId;
+  if (filters.completionStatus)  p.completion_status   = filters.completionStatus;
+  if (filters.resultStatus)      p.status              = filters.resultStatus;
+  if (filters.createdBy)         p.created_by          = filters.createdBy;
+  if (filters.lotNumber)         p.lot_number          = filters.lotNumber;
+  return p;
+};
+
+export const envLocationProfilesAPI = {
+  search: (params?: { q?: string; iso_class?: string; room_or_area?: string; active?: boolean; sample_type?: string; context?: string }) =>
+    api.get<EnvLocationProfile[]>('/env/location-profiles', { params }),
+  getById: (id: string) => api.get<EnvLocationProfile>(`/env/location-profiles/${id}`),
+  create: (data: {
+    location_code: string; display_name: string; room_or_area: string; iso_class: string;
+    allowed_sample_types?: string[]; allowed_contexts?: string[];
+    frequency?: string; notes?: string;
+  }) => api.post<EnvLocationProfile>('/env/location-profiles', data),
+  update: (id: string, data: Partial<{
+    location_code: string; display_name: string; room_or_area: string; iso_class: string;
+    allowed_sample_types: string[]; allowed_contexts: string[];
+    frequency: string; notes: string;
+  }>) => api.put<EnvLocationProfile>(`/env/location-profiles/${id}`, data),
+  deactivate: (id: string) => api.patch(`/env/location-profiles/${id}/deactivate`),
+  reactivate: (id: string) => api.patch(`/env/location-profiles/${id}/reactivate`),
+};
+
+export const envSessionsAPI = {
+  getAll: (params?: {
+    date_from?: string; date_to?: string; context?: string; room_or_area?: string;
+    batch_id?: string; completion_status?: string; created_by?: string; lot_number?: string;
+    limit?: number; offset?: number;
+  }) => api.get<{ sessions: EnvMonitoringSession[]; total: number; limit: number; offset: number }>(
+    '/env/sessions', { params }
+  ),
+  getById: (id: string) => api.get<EnvMonitoringSession & { samples: EnvSample[] }>(`/env/sessions/${id}`),
+  create: (data: {
+    monitoring_date: string; monitoring_context: MonitoringContext;
+    room_or_area?: string; batch_id?: string; custom_reason?: string; notes?: string;
+  }) => api.post<EnvMonitoringSession>('/env/sessions', data),
+  update: (id: string, data: Partial<{
+    monitoring_date: string; monitoring_context: MonitoringContext;
+    room_or_area: string; batch_id: string; custom_reason: string; notes: string;
+  }>) => api.put<EnvMonitoringSession>(`/env/sessions/${id}`, data),
+  delete: (id: string, reason: string) => api.delete(`/env/sessions/${id}`, { data: { reason } }),
+  restore: (id: string) => api.post(`/env/sessions/${id}/restore`),
+};
+
+export const envSamplesAPI = {
+  create: (data: {
+    session_id: string;
+    location_profile_id?: string;
+    sample_location_text?: string;
+    sample_type: EnvSampleType;
+    iso_class: EnvISOClass;
+    viable_cfu?: number | null;
+    surface_cfu?: number | null;
+    particle_count_0_5?: number | null;
+    particle_count_5_0?: number | null;
+    organism_id?: string;
+    deviation_number?: string;
+    notes?: string;
+  }) => api.post<EnvSample>('/env/samples', data),
+  update: (id: string, data: Partial<{
+    location_profile_id: string; sample_location_text: string;
+    sample_type: EnvSampleType; iso_class: EnvISOClass;
+    viable_cfu: number | null; surface_cfu: number | null;
+    particle_count_0_5: number | null; particle_count_5_0: number | null;
+    organism_id: string; deviation_number: string; notes: string;
+  }>) => api.put<EnvSample>(`/env/samples/${id}`, data),
+  delete: (id: string, reason: string) => api.delete(`/env/samples/${id}`, { data: { reason } }),
+  restore: (id: string) => api.post(`/env/samples/${id}/restore`),
+};
+
+export const envAnalyticsAPI = {
+  kpi:               (filters?: Partial<EnvFilterState> & { tab_type?: string }) =>
+    api.get<EnvKPISummary>('/env/analytics/kpi', {
+      params: { ...buildEnvParams(filters ?? {}), ...(filters?.tab_type ? { tab_type: filters.tab_type } : {}) }
+    }),
+  viableAirTrend:    (filters?: Partial<EnvFilterState>) =>
+    api.get<EnvAnalyticsTrendPoint[]>('/env/analytics/viable-air-trend', { params: buildEnvParams(filters ?? {}) }),
+  nonviableAirTrend: (filters?: Partial<EnvFilterState>) =>
+    api.get<EnvAnalyticsTrendPoint[]>('/env/analytics/nonviable-air-trend', { params: buildEnvParams(filters ?? {}) }),
+  surfaceTrend:      (filters?: Partial<EnvFilterState>) =>
+    api.get<EnvAnalyticsTrendPoint[]>('/env/analytics/surface-trend', { params: buildEnvParams(filters ?? {}) }),
+  locationTrend:     (location_profile_id: string, filters?: Partial<EnvFilterState>) =>
+    api.get<EnvAnalyticsTrendPoint[]>('/env/analytics/location-trend', {
+      params: { location_profile_id, ...buildEnvParams(filters ?? {}) }
+    }),
+  sessions:          (params?: {
+    date_from?: string; date_to?: string; context?: string; room_or_area?: string;
+    batch_id?: string; completion_status?: string; lot_number?: string;
+    limit?: number; offset?: number;
+  }) => api.get<{ sessions: EnvMonitoringSession[]; total: number; limit: number; offset: number }>(
+    '/env/analytics/sessions', { params }
+  ),
+  lots:              () => api.get<{ id: string; lot_number: string; lot_key: string }[]>('/env/analytics/lots'),
+  thresholds:        () => api.get<EnvThresholds>('/env/analytics/thresholds'),
+  /** Primary drill-down: fetch a single sample by its real DB primary key. */
+  sampleDetail:      (sampleId: string, sampleType?: string) =>
+    api.get<EnvSampleDetail>(`/env/analytics/sample/${sampleId}`, {
+      params: sampleType ? { sample_type: sampleType } : {},
+    }),
+  exportCsvUrl:      (filters?: Partial<EnvFilterState>) => {
+    const params = new URLSearchParams(buildEnvParams(filters ?? {}));
+    const token = localStorage.getItem('eha_token') || '';
+    if (token) params.set('_token', token);
+    return `${import.meta.env.VITE_API_URL || ''}/api/env/analytics/export/csv?${params.toString()}`;
+  },
+};
+
 export default api;
+

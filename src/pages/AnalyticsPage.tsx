@@ -381,14 +381,6 @@ export default function AnalyticsPage() {
             <HeatmapChart data={locations} />
           )}
         </ChartCard>
-
-        <ChartCard id="achart-viable-cfu" title="Viable CFU by Lot" icon={Shield} subtitle="ISO 5, ISO 7, and ISO 8 colony counts per lot">
-          {loading ? <Skeleton /> : <ViableCFUChart data={viableByLot} onBarClick={setViableLot} />}
-        </ChartCard>
-
-        <ChartCard id="achart-particle" title="Particle Count by Lot" icon={Package} subtitle="Average 0.5μm and 5.0μm per lot">
-          {loading ? <Skeleton /> : <ParticleCountChart data={viableByLot} onBarClick={setViableLot} />}
-        </ChartCard>
       </div>
 
       {/* Top performers table */}

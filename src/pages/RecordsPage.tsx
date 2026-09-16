@@ -412,7 +412,7 @@ export default function RecordsPage() {
         <div>
           <h1 className="text-2xl font-bold text-surface-900 dark:text-white">Records</h1>
           <p className="text-sm text-surface-500 dark:text-surface-400 mt-0.5">
-            {tab === 'pm' ? `${total} PM excursion records` : tab === 'viable' ? `${viableRecords.length} viable/non-viable records` : `${surfaceRecords.length} surface sampling records`}
+          {tab === 'pm' ? `${total} PM excursion records` : tab === 'viable' ? `${viableRecords.length} viable/non-viable samples` : `${surfaceRecords.length} surface sampling records`}
           </p>
         </div>
         {canExport && (
@@ -597,7 +597,7 @@ export default function RecordsPage() {
                     />
                   </th>
                 )}
-                <th>Lot Number</th><th>Sample Date</th><th>ISO Class</th><th>Room</th>
+                <th>Context</th><th>Lot Number</th><th>Sample Date</th><th>ISO Class</th><th>Sample Type</th><th>Location</th><th>Room</th>
                 <th>CFU</th>
                 <th>0.5 μm (p/m³)</th><th>5.0 μm (p/m³)</th>
                 <th>Deviation #</th><th>Entered By</th>
@@ -609,10 +609,10 @@ export default function RecordsPage() {
                 )) : viableRecords.length === 0 ? (
                   <tr><td colSpan={10} className="text-center py-12 text-surface-400">No viable records yet</td></tr>
                 ) : viableRecords.map(r => {
-                  const activeCfu = r.iso_class === 'ISO 5' ? r.iso5_cfu
-                                  : r.iso_class === 'ISO 8' ? (r.iso8_cfu ?? 0)
-                                  : r.iso7_cfu;
-                  const cfuSt = evaluateCfuStatus(activeCfu, r.iso_class as ViableISOClass);
+                  const activeCfu = r.iso_class === 'ISO 5' ? (r.iso5_cfu ?? null)
+                                  : r.iso_class === 'ISO 8' ? (r.iso8_cfu ?? null)
+                                  : (r.iso7_cfu ?? null);
+                  const cfuSt = activeCfu !== null ? evaluateCfuStatus(activeCfu, r.iso_class as ViableISOClass) : 'normal';
                   const rowStatus = cfuSt;
                   const isViableSelected = selectedViable.has(r.id);
                   return (
@@ -632,13 +632,21 @@ export default function RecordsPage() {
                         />
                       </td>
                     )}
-                    <td className="font-mono text-xs">{r.lot_number}</td>
+                    <td className="text-xs font-semibold">{(() => {
+                      const ctx = (r as any).monitoring_context;
+                      if (ctx === 'ROUTINE_MONTHLY') return <span className="text-emerald-600 dark:text-emerald-400">Routine Monthly</span>;
+                      if (ctx === 'OTHER') return <span className="text-amber-600 dark:text-amber-400">Other</span>;
+                      return <span className="text-brand-600 dark:text-brand-400">Batch</span>;
+                    })()}</td>
+                    <td className="font-mono text-xs">{r.lot_number || <span className="text-surface-400 dark:text-surface-500">—</span>}</td>
                     <td className="text-xs">{fmtHitDate(r.sample_date)}</td>
                     <td><span className={r.iso_class === 'ISO 5' ? 'badge-iso5' : 'badge-iso7'}>{r.iso_class}</span></td>
+                    <td className="text-xs text-surface-600 dark:text-surface-400">{(r as any).sample_type === 'NONVIABLE_AIR' ? 'Non-Viable' : 'Viable Air'}</td>
+                    <td className="text-xs text-surface-600 dark:text-surface-300">{(r as any).sample_location || '—'}</td>
                     <td className="text-xs text-surface-600 dark:text-surface-300">{r.room_number || '—'}</td>
-                    <td><CfuBadge val={activeCfu} isoClass={r.iso_class} /></td>
-                    <td><ParticleBadge val={Number(r.particle_05um)} t={(PARTICLE_THRESHOLDS[r.iso_class] ?? PARTICLE_THRESHOLDS['ISO 7']).um05} /></td>
-                    <td><ParticleBadge val={Number(r.particle_50um)} t={(PARTICLE_THRESHOLDS[r.iso_class] ?? PARTICLE_THRESHOLDS['ISO 7']).um50} /></td>
+                    <td>{activeCfu !== null ? <CfuBadge val={activeCfu} isoClass={r.iso_class} /> : <span className="text-surface-400 text-xs">—</span>}</td>
+                    <td>{r.particle_05um !== null && r.particle_05um !== undefined ? <ParticleBadge val={Number(r.particle_05um)} t={(PARTICLE_THRESHOLDS[r.iso_class] ?? PARTICLE_THRESHOLDS['ISO 7']).um05} /> : <span className="text-surface-400 text-xs">—</span>}</td>
+                    <td>{r.particle_50um !== null && r.particle_50um !== undefined ? <ParticleBadge val={Number(r.particle_50um)} t={(PARTICLE_THRESHOLDS[r.iso_class] ?? PARTICLE_THRESHOLDS['ISO 7']).um50} /> : <span className="text-surface-400 text-xs">—</span>}</td>
                     <td className="text-xs">{r.deviation_number || '—'}</td>
                     <td className="text-xs">{r.created_by_name || '—'}</td>
                     <td onClick={e => e.stopPropagation()}>
@@ -686,7 +694,7 @@ export default function RecordsPage() {
                     />
                   </th>
                 )}
-                <th>Sample Location</th><th>Lot Number</th><th>Sample Date</th>
+                <th>Context</th><th>Sample Location</th><th>Lot Number</th><th>Sample Date</th>
                 <th>ISO Class</th><th>CFUs Found</th><th>Organism</th>
                 <th>Deviation #</th><th>Entered By</th>
                 <th>Actions</th>
@@ -711,11 +719,17 @@ export default function RecordsPage() {
                         />
                       </td>
                     )}
+                    <td className="text-xs font-semibold">{(() => {
+                      const ctx = (r as any).monitoring_context;
+                      if (ctx === 'ROUTINE_WEEKLY') return <span className="text-emerald-600 dark:text-emerald-400">Routine Weekly</span>;
+                      if (ctx === 'OTHER') return <span className="text-amber-600 dark:text-amber-400">Other</span>;
+                      return <span className="text-brand-600 dark:text-brand-400">Batch</span>;
+                    })()}</td>
                     <td className="font-semibold text-surface-800 dark:text-surface-200">{r.sample_location}</td>
-                    <td className="font-mono text-xs">{r.lot_number}</td>
+                    <td className="font-mono text-xs">{r.lot_number || <span className="text-surface-400">—</span>}</td>
                     <td className="text-xs">{fmtHitDate(r.sample_date)}</td>
                     <td><span className={r.iso_class === 'ISO 5' ? 'badge-iso5' : 'badge-iso7'}>{r.iso_class}</span></td>
-                    <td><span className={clsx('badge', r.cfu_found > 0 ? 'badge-hit' : 'badge-no-hit')}>{r.cfu_found}</span></td>
+                    <td>{r.cfu_found !== null && r.cfu_found !== undefined ? <span className={clsx('badge', r.cfu_found > 0 ? 'badge-hit' : 'badge-no-hit')}>{r.cfu_found}</span> : <span className="text-surface-400 text-xs">—</span>}</td>
                     <td className="text-xs">{r.organism_id || '—'}</td>
                     <td className="text-xs">{r.deviation_number || '—'}</td>
                     <td className="text-xs">{r.created_by_name || '—'}</td>
