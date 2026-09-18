@@ -40,10 +40,10 @@ export function getLocationConfig(
   }
 
   // Crimping / Helper — Finger Tips only → ISO 7
-  // Individual L/R: Alert ≥ 1 (alert only, never individual action)
-  // Combined L+R: Action when > 3 (evaluated by threshold engine, not here)
-  // action_level is set high so individual cards never show "Action" badge
-  return { iso_class: 'ISO 7', alert_level: 1, action_level: 9999 };
+  // Combined (L+R): Alert > 3, Action > 5 (evaluated by threshold engine, not here)
+  // Individual L/R cards show no Alert or Action badge — combined is the sole event.
+  // alert_level=0 suppresses individual card badges. action_level=9999 is a sentinel.
+  return { iso_class: 'ISO 7', alert_level: 0, action_level: 9999 };
 }
 
 // Locations available per personnel type

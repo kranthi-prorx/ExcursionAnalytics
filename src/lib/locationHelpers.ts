@@ -48,57 +48,80 @@ export function getLocationDisplayLabel(logicalLocation: string, isoClass: strin
   return `${logicalLocation} — ${isoClass}`;
 }
 
-// ─── Combined Fingertip Status ───────────────────────────────────────────────
-// Combined (left + right) fingertip threshold: combinedFingertipHits > 3
-// This threshold applies regardless of ISO class (ISO 5 or ISO 7 fingertips).
-// There is NO approved alert threshold for the combined group (N/A).
+// ─── Combined Fingertip Status (ISO 7 Crimper/Helper) ───────────────────────
+// BUSINESS RULE (updated 2026-09-18):
+//   Combined (L+R) is the SOLE authoritative variable for ISO 7 fingertip events.
+//   ISO 7 Crimper/Helper only — ISO 5 Filling/Stoppering is unaffected.
 //
-// IMPORTANT: The combined threshold label (currently "Action") requires
-// Quality Unit confirmation. It is centralized here — change `thresholdLabel`
-// to update the entire application.
+//   Combined  0–3 → Normal  (status: 'ok')
+//   Combined  4–5 → Alert   (combined > 3,  status: 'alert')
+//   Combined  6+  → Action  (combined > 5,  status: 'action')
+//
+//   Action supersedes Alert: at most ONE combined event per record.
+//
+// Previous thresholds (superseded 2026-09-18):
+//   alertThreshold:  null (no combined alert)
+//   actionThreshold: 3   (action when combined > 3)
+//
+// New thresholds:
+//   alertThreshold:  3   (alert  when combined > 3,  i.e. combined >= 4)
+//   actionThreshold: 5   (action when combined > 5,  i.e. combined >= 6)
 
-/** Configurable threshold label — QU to confirm if this is "Alert" or "Action" */
-export const COMBINED_FINGERTIP_THRESHOLD_LABEL = 'Action' as const; // TODO: QU confirmation needed
+// ─── Centralized combined fingertip threshold config ─────────────────────────
+// Mirrors backend ISO7_CRIMPER_COMBINED_FINGERTIP.
+// Update here to keep UI in sync with backend.
+export const ISO7_COMBINED_FINGERTIP_ALERT_THRESHOLD  = 3;  // Alert  when combined > 3
+export const ISO7_COMBINED_FINGERTIP_ACTION_THRESHOLD = 5;  // Action when combined > 5
 
 export interface CombinedFingertipResult {
   combinedHits: number;
   leftHits: number;
   rightHits: number;
   isoClass: string;
-  /** null = N/A (no alert threshold defined for combined fingertips) */
-  alertThreshold: number | null;
-  /** Combined action threshold: > 3 */
+  /** Alert threshold: combined > alertThreshold triggers ALERT */
+  alertThreshold: number;
+  /** Action threshold: combined > actionThreshold triggers ACTION */
   actionThreshold: number;
-  status: 'ok' | 'exceeded';
-  /** Label for the exceeded status — centralized config */
-  thresholdLabel: string;
+  /** 'ok' | 'alert' | 'action' */
+  status: 'ok' | 'alert' | 'action';
+  /** Legacy field: 'exceeded' when status is 'alert' or 'action', else 'ok' */
+  exceeded: boolean;
 }
 
 /**
- * Calculate combined fingertip status.
- * Action rule: combinedFingertipHits > 3
- * Alert rule: N/A (null)
+ * Calculate combined fingertip status for ISO 7 Crimper/Helper.
+ * Action supersedes Alert — returns exactly one status per record.
  *
- * Examples:
- *  - Left 1 + Right 2 = 3 → OK
- *  - Left 2 + Right 2 = 4 → Exceeded
- *  - Left 0 + Right 4 = 4 → Exceeded
+ * Examples (ISO 7):
+ *  Combined 0–3 → ok
+ *  Combined 4–5 → alert   (> 3)
+ *  Combined 6+  → action  (> 5)
  */
 export function calculateGroupedStatus(
   leftHits: number,
   rightHits: number,
-  isoClass: string = 'ISO 5',
+  isoClass: string = 'ISO 7',
 ): CombinedFingertipResult {
   const combined = leftHits + rightHits;
+  const alertThreshold  = ISO7_COMBINED_FINGERTIP_ALERT_THRESHOLD;
+  const actionThreshold = ISO7_COMBINED_FINGERTIP_ACTION_THRESHOLD;
+
+  let status: 'ok' | 'alert' | 'action' = 'ok';
+  if (combined > actionThreshold) {
+    status = 'action';
+  } else if (combined > alertThreshold) {
+    status = 'alert';
+  }
+
   return {
     combinedHits: combined,
     leftHits,
     rightHits,
     isoClass,
-    alertThreshold: null,  // N/A — no approved alert threshold
-    actionThreshold: 3,    // exceeded when > 3
-    status: combined > 3 ? 'exceeded' : 'ok',
-    thresholdLabel: COMBINED_FINGERTIP_THRESHOLD_LABEL,
+    alertThreshold,
+    actionThreshold,
+    status,
+    exceeded: status !== 'ok',
   };
 }
 

@@ -80,49 +80,64 @@ function iso5RightFingertipAction(hitDetails) {
   return null;
 }
 
-// ─── ISO 7 Fingertip Rules (Crimping/Helper) ────────────────────────────────
-// Individual L/R: Alert at >= 1.  NEVER generate Action individually.
-// Combined (L+R): Action when > 3.  No separate combined Alert.
+// ─── ISO 7 Combined Fingertip Rule (Crimping/Helper) ────────────────────────
+// BUSINESS RULE (updated 2026-09-18):
+//   Combined (L+R) is the SOLE authoritative variable for ISO 7 fingertip events.
+//   No individual Left or Right events are generated.
+//
+//   combinedIso7Fingertips = leftFingertipHits + rightFingertipHits
+//
+//   Combined  0–3 → Normal  (no event)
+//   Combined  4–5 → Alert   (combined > 3)
+//   Combined  6+  → Action  (combined > 5)
+//
+//   Action supersedes Alert: a single record produces AT MOST ONE combined event.
+//
+// Previous thresholds (superseded 2026-09-18):
+//   Alert:  individual L/R >= 1
+//   Action: combined > 3
+//
+// New thresholds:
+//   Alert:  combined > 3  (i.e. combined >= 4)
+//   Action: combined > 5  (i.e. combined >= 6)
 
-function iso7LeftFingertipAlert(hitDetails) {
-  const val = findHitValue(hitDetails, FINGERTIP_LEFT_NORM, 'ISO 7');
-  if (val >= 1) {
-    return {
-      rule_key: 'iso7_left_fingertip_alert',
-      location: 'Left Fingertip',
-      display_label: 'Left Fingertip — ISO 7',
-      iso_class: 'ISO 7',
-      severity: 'ALERT',
-      measured_value: val,
-      threshold_value: 1,
-      threshold_description: '>= 1',
-    };
-  }
-  return null;
-}
+// ─── Centralized ISO 7 Crimper/Helper Combined Fingertip Config ──────────────
+// Update alertThreshold / actionThreshold here to affect ALL routes,
+// analytics, drill-downs, KPI counts, exports, and historical recalculation.
+const ISO7_CRIMPER_COMBINED_FINGERTIP = {
+  personnelType: 'Crimping',
+  isoClass: 'ISO 7',
+  location: 'COMBINED_FINGERTIPS',
+  alertOperator: '>',
+  alertThreshold: 3,   // Alert when combined > 3  (combined >= 4)
+  actionOperator: '>',
+  actionThreshold: 5,  // Action when combined > 5 (combined >= 6)
+};
 
-function iso7RightFingertipAlert(hitDetails) {
-  const val = findHitValue(hitDetails, FINGERTIP_RIGHT_NORM, 'ISO 7');
-  if (val >= 1) {
-    return {
-      rule_key: 'iso7_right_fingertip_alert',
-      location: 'Right Fingertip',
-      display_label: 'Right Fingertip — ISO 7',
-      iso_class: 'ISO 7',
-      severity: 'ALERT',
-      measured_value: val,
-      threshold_value: 1,
-      threshold_description: '>= 1',
-    };
-  }
-  return null;
-}
-
-function iso7CombinedFingertipsAction(hitDetails) {
-  const left  = findHitValue(hitDetails, FINGERTIP_LEFT_NORM, 'ISO 7');
+/**
+ * ISO 7 combined fingertip evaluator.
+ * Returns exactly ONE event (ALERT or ACTION) or null.
+ * Action supersedes Alert — only the highest applicable severity is emitted.
+ *
+ * Boundary table:
+ *   Combined 0  → null  (Normal)
+ *   Combined 1  → null  (Normal)
+ *   Combined 2  → null  (Normal)
+ *   Combined 3  → null  (Normal)
+ *   Combined 4  → ALERT
+ *   Combined 5  → ALERT
+ *   Combined 6  → ACTION
+ *   Combined 7+ → ACTION
+ */
+function iso7CombinedFingertipsThreshold(hitDetails) {
+  const left  = findHitValue(hitDetails, FINGERTIP_LEFT_NORM,  'ISO 7');
   const right = findHitValue(hitDetails, FINGERTIP_RIGHT_NORM, 'ISO 7');
   const combined = left + right;
-  if (combined > 3) {
+
+  const cfg = ISO7_CRIMPER_COMBINED_FINGERTIP;
+
+  if (combined > cfg.actionThreshold) {
+    // Action supersedes Alert — emit only one ACTION event
     return {
       rule_key: 'iso7_combined_fingertips_action',
       location: 'Fingertips (Combined)',
@@ -130,12 +145,28 @@ function iso7CombinedFingertipsAction(hitDetails) {
       iso_class: 'ISO 7',
       severity: 'ACTION',
       measured_value: combined,
-      threshold_value: 3,
-      threshold_description: '> 3',
+      threshold_value: cfg.actionThreshold,
+      threshold_description: `> ${cfg.actionThreshold}`,
       left_value: left,
       right_value: right,
     };
   }
+
+  if (combined > cfg.alertThreshold) {
+    return {
+      rule_key: 'iso7_combined_fingertips_alert',
+      location: 'Fingertips (Combined)',
+      display_label: 'Fingertips — ISO 7',
+      iso_class: 'ISO 7',
+      severity: 'ALERT',
+      measured_value: combined,
+      threshold_value: cfg.alertThreshold,
+      threshold_description: `> ${cfg.alertThreshold}`,
+      left_value: left,
+      right_value: right,
+    };
+  }
+
   return null;
 }
 
@@ -187,10 +218,10 @@ const FILLING_RULES = [
   makeGownSleeveRule('right sleeve', 'Right Sleeve', 2,  4),
 ];
 
+// CRIMPING_RULES: only the combined fingertip rule.
+// Individual L/R events are NOT generated — the combined is the sole ISO 7 event.
 const CRIMPING_RULES = [
-  iso7LeftFingertipAlert,
-  iso7RightFingertipAlert,
-  iso7CombinedFingertipsAction,
+  iso7CombinedFingertipsThreshold,
 ];
 
 function getRulesForPersonnelType(personnelType) {
@@ -380,7 +411,7 @@ function worstStatus(statuses) {
 }
 
 module.exports = {
-  // ── PM Monitoring (existing, unchanged) ──
+  // ── PM Monitoring ──
   calculateThresholdEvents,
   calculatePmHitTotals,
   summarizeEvents,
@@ -390,7 +421,9 @@ module.exports = {
   findHitValue,
   FINGERTIP_LEFT_NORM,
   FINGERTIP_RIGHT_NORM,
-  // ── Environmental Monitoring (new) ──
+  // Exposed centralized config (use for UI display and tests)
+  ISO7_CRIMPER_COMBINED_FINGERTIP,
+  // ── Environmental Monitoring (unchanged) ──
   ENV_MONITORING_THRESHOLDS,
   evaluateViableCfuStatus,
   evaluateSurfaceCfuStatus,

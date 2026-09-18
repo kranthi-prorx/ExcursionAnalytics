@@ -89,27 +89,34 @@ function FingertipBanner({ hitDetails }: { hitDetails: Array<{ location: string;
       {iso7Results.map(result => (
         <div key={result.isoClass} className={clsx(
           'rounded-xl p-3 border text-xs',
-          result.status === 'exceeded'
+          result.status === 'action'
             ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+            : result.status === 'alert'
+            ? 'border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300'
             : 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
         )}>
           <div className="flex items-center justify-between mb-1">
             <span className="font-semibold">Fingertips — {result.isoClass} (Combined)</span>
-            <span className={clsx('badge', result.status === 'exceeded' ? 'badge-hit' : 'badge-no-hit')}>
-              {result.status === 'exceeded' ? '⚠ Action' : 'OK'}
+            <span className={clsx('badge',
+              result.status === 'action' ? 'badge-hit'
+              : result.status === 'alert' ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300'
+              : 'badge-no-hit'
+            )}>
+              {result.status === 'action' ? '⚠ Action' : result.status === 'alert' ? '⚠ Alert' : 'OK'}
             </span>
           </div>
           <div className="flex items-center gap-3">
             <span>L: {result.leftHits}</span>
             <span>R: {result.rightHits}</span>
             <span className="font-bold">Combined: {result.combinedHits}</span>
-            <span className="text-surface-400">(Action &gt; {result.actionThreshold})</span>
+            <span className="text-surface-400">Alert &gt;{result.alertThreshold} | Action &gt;{result.actionThreshold}</span>
           </div>
         </div>
       ))}
     </>
   );
 }
+
 
 // ─── Individual Record Card ───────────────────────────────────────────────────
 function RecordCard({ rec }: { rec: ExcursionRecord }) {

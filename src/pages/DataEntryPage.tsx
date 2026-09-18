@@ -385,7 +385,8 @@ export default function DataEntryPage() {
                     <>
                       <span className="font-semibold">Crimping / Helper</span> personnel:
                       <ul className="mt-1 space-y-0.5 list-disc list-inside">
-                        <li><strong>ISO 7 Finger Tips</strong> — Alert: &gt;1 CFU, Action: &gt;3 CFU</li>
+                        <li><strong>ISO 7 Combined Finger Tips</strong> — Alert: &gt;3 combined hits, Action: &gt;5 combined hits</li>
+                        <li>Left and Right values are recorded individually; status is based on the <strong>combined total</strong></li>
                       </ul>
                     </>
                   )}
@@ -513,19 +514,28 @@ export default function DataEntryPage() {
                     {iso7Results.map(r => (
                       <div key={r.isoClass} className={clsx(
                         'p-4 rounded-xl border-2 transition-all duration-200',
-                        r.status === 'exceeded'
+                        r.status === 'action'
                           ? 'border-red-400 dark:border-red-600 bg-red-50/60 dark:bg-red-900/15'
+                          : r.status === 'alert'
+                          ? 'border-amber-400 dark:border-amber-600 bg-amber-50/60 dark:bg-amber-900/15'
                           : 'border-surface-200 dark:border-surface-700 bg-surface-50/50 dark:bg-surface-800/50'
                       )}>
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-semibold text-surface-700 dark:text-surface-300">Combined Fingertips</span>
                             <IsoBadge iso={r.isoClass} />
-                            {r.status === 'exceeded' && (
+                            {r.status === 'action' && (
                               <span className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase tracking-wide">⚠ Action</span>
                             )}
+                            {r.status === 'alert' && (
+                              <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide">⚠ Alert</span>
+                            )}
                           </div>
-                          <span className={clsx('text-lg font-bold', r.status === 'exceeded' ? 'text-red-600 dark:text-red-400' : 'text-surface-700 dark:text-surface-300')}>
+                          <span className={clsx('text-lg font-bold',
+                            r.status === 'action' ? 'text-red-600 dark:text-red-400'
+                            : r.status === 'alert' ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-surface-700 dark:text-surface-300'
+                          )}>
                             {r.combinedHits}
                           </span>
                         </div>
@@ -533,7 +543,7 @@ export default function DataEntryPage() {
                           <span>Left: <strong className="text-surface-700 dark:text-surface-300">{r.leftHits}</strong></span>
                           <span>+ Right: <strong className="text-surface-700 dark:text-surface-300">{r.rightHits}</strong></span>
                           <span>= Combined: <strong className="text-surface-700 dark:text-surface-300">{r.combinedHits}</strong></span>
-                          <span className="ml-auto">(Action &gt; {r.actionThreshold})</span>
+                          <span className="ml-auto">Alert &gt;{r.alertThreshold} &nbsp;|&nbsp; Action &gt;{r.actionThreshold}</span>
                         </div>
                       </div>
                     ))}
@@ -622,21 +632,27 @@ export default function DataEntryPage() {
                     {iso7Results.map(r => (
                       <div key={r.isoClass} className={clsx(
                         'rounded-xl p-3 border text-xs',
-                        r.status === 'exceeded'
+                        r.status === 'action'
                           ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+                          : r.status === 'alert'
+                          ? 'border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300'
                           : 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
                       )}>
                         <div className="flex items-center justify-between">
                           <span className="font-semibold">Fingertips — {r.isoClass}</span>
-                          <span className={clsx('badge', r.status === 'exceeded' ? 'badge-hit' : 'badge-no-hit')}>
-                            {r.status === 'exceeded' ? '⚠ Action' : 'OK'}
+                          <span className={clsx('badge',
+                            r.status === 'action' ? 'badge-hit'
+                            : r.status === 'alert' ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300'
+                            : 'badge-no-hit'
+                          )}>
+                            {r.status === 'action' ? '⚠ Action' : r.status === 'alert' ? '⚠ Alert' : 'OK'}
                           </span>
                         </div>
                         <div className="flex items-center gap-3 mt-1">
                           <span>L: {r.leftHits}</span>
                           <span>R: {r.rightHits}</span>
                           <span className="font-bold">Combined: {r.combinedHits}</span>
-                          <span className="text-surface-400">(Action &gt; {r.actionThreshold})</span>
+                          <span className="text-surface-400">Alert &gt;{r.alertThreshold} | Action &gt;{r.actionThreshold}</span>
                         </div>
                       </div>
                     ))}
