@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity, Wind, FlaskConical, MapPin, RefreshCw, Download,
@@ -84,16 +84,40 @@ function StatusDot(props: any) {
   return <circle cx={cx} cy={cy} r={5} fill={color} stroke="white" strokeWidth={1.5} />;
 }
 
+const UNASSIGNED_ROOM = 'Unassigned Room';
+
+function roomOf(p: EnvAnalyticsTrendPoint): string {
+  return ((p as any).room_or_area ?? '').toString().trim() || UNASSIGNED_ROOM;
+}
+
+// Group points by room (natural sort), preserving each room's points
+function groupByRoom(points: EnvAnalyticsTrendPoint[]): [string, EnvAnalyticsTrendPoint[]][] {
+  const map = new Map<string, EnvAnalyticsTrendPoint[]>();
+  points.forEach(p => {
+    const r = roomOf(p);
+    if (!map.has(r)) map.set(r, []);
+    map.get(r)!.push(p);
+  });
+  return Array.from(map.entries()).sort((a, b) =>
+    a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function isoClassesIn(points: EnvAnalyticsTrendPoint[]): EnvISOClass[] {
+  const present = new Set(points.map(p => p.iso_class));
+  return ISO_CLASSES.filter(c => present.has(c));
+}
+
+type ThresholdSet = { iso: EnvISOClass; alert: number | null; action: number };
+
 function TrendChart({
-  title, points, yKey, thresholds, unit, onDotClick, colorKey = 'location_code',
+  title, points, yKey, thresholds, unit, onDotClick,
 }: {
   title: string;
   points: EnvAnalyticsTrendPoint[];
   yKey: keyof EnvAnalyticsTrendPoint;
-  thresholds: { alert: number | null; action: number };
+  thresholds: ThresholdSet[];
   unit: string;
   onDotClick: (p: EnvAnalyticsTrendPoint) => void;
-  colorKey?: string;
 }) {
   if (points.length === 0) {
     return (
@@ -104,15 +128,22 @@ function TrendChart({
     );
   }
 
-  // Group by location for multi-series
-  const locations = Array.from(new Set(points.map(p => (p as any)[colorKey] || (p as any).sample_location || 'sample')));
+  // One series per location; when the room mixes ISO classes (e.g. 105A: ISO 5 + ISO 7)
+  // each location/ISO class pair becomes its own line.
+  const multiIso = isoClassesIn(points).length > 1;
+  const seriesOf = (p: EnvAnalyticsTrendPoint) => {
+    const loc = (p as any).location_code || (p as any).sample_location || 'sample';
+    return multiIso ? `${loc} (${p.iso_class})` : loc;
+  };
+  const locations = Array.from(new Set(points.map(seriesOf))).sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   const allDates  = Array.from(new Set(points.map(p => p.date))).sort();
 
-  // Build chart data: one row per date, one key per location
+  // Build chart data: one row per date, one key per series
   const chartData = allDates.map(date => {
     const row: any = { date };
     locations.forEach(loc => {
-      const match = points.find(p => p.date === date && ((p as any)[colorKey] || (p as any).sample_location || 'sample') === loc);
+      const match = points.find(p => p.date === date && seriesOf(p) === loc);
       row[loc] = match ? (match as any)[yKey] : null;
       row[`${loc}_status`] = match?.status ?? null;
       row[`${loc}_pt`] = match ?? null;
@@ -133,12 +164,16 @@ function TrendChart({
             contentStyle={{ fontSize: 12, borderRadius: 8 }}
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
-          {thresholds.alert !== null && (
-            <ReferenceLine y={thresholds.alert} stroke="#f59e0b" strokeDasharray="4 4"
-              label={{ value: 'Alert', position: 'right', fontSize: 10, fill: '#f59e0b' }} />
-          )}
-          <ReferenceLine y={thresholds.action} stroke="#ef4444" strokeDasharray="4 4"
-            label={{ value: 'Action', position: 'right', fontSize: 10, fill: '#ef4444' }} />
+          {thresholds.map(t => (
+            <Fragment key={t.iso}>
+              {t.alert !== null && (
+                <ReferenceLine y={t.alert} stroke="#f59e0b" strokeDasharray="4 4"
+                  label={{ value: multiIso ? `${t.iso} Alert` : 'Alert', position: 'right', fontSize: 10, fill: '#f59e0b' }} />
+              )}
+              <ReferenceLine y={t.action} stroke="#ef4444" strokeDasharray="4 4"
+                label={{ value: multiIso ? `${t.iso} Action` : 'Action', position: 'right', fontSize: 10, fill: '#ef4444' }} />
+            </Fragment>
+          ))}
           {locations.map((loc, i) => (
             <Line
               key={loc}
@@ -445,15 +480,15 @@ export default function EnvAnalyticsPage() {
       {/* ── VIABLE AIR TAB ── */}
       {!loading && activeTab === 'viable' && (
         <div className="space-y-4">
-          {ISO_CLASSES.map(iso => {
-            const pts = viableData.filter(p => p.iso_class === iso);
+          {groupByRoom(viableData).map(([room, pts]) => {
+            const isos = isoClassesIn(pts);
             return (
               <TrendChart
-                key={iso}
-                title={`${iso} — Viable Air (CFU)`}
+                key={room}
+                title={`${room} — Viable Air (CFU) · ${isos.join(' / ')}`}
                 points={pts}
                 yKey="viable_cfu"
-                thresholds={VIABLE_THRESHOLDS[iso]}
+                thresholds={isos.map(iso => ({ iso, ...VIABLE_THRESHOLDS[iso] }))}
                 unit="CFU"
                 onDotClick={handleDotClick}
               />
@@ -468,21 +503,21 @@ export default function EnvAnalyticsPage() {
       {/* ── NONVIABLE AIR TAB ── */}
       {!loading && activeTab === 'nonviable' && (
         <div className="space-y-6">
-          {ISO_CLASSES.map(iso => {
-            const pts = nonviableData.filter(p => p.iso_class === iso);
+          {groupByRoom(nonviableData).map(([room, pts]) => {
+            const isos = isoClassesIn(pts);
             const pts05 = pts.filter(p => p.particle_count_0_5 !== null && p.particle_count_0_5 !== undefined);
             const pts50 = pts.filter(p => p.particle_count_5_0 !== null && p.particle_count_5_0 !== undefined);
             return (
-              <div key={iso} className="space-y-3">
+              <div key={room} className="space-y-3">
                 <h3 className="text-sm font-bold text-surface-700 dark:text-surface-300 pb-1 border-b border-surface-100 dark:border-surface-800">
-                  {iso} — Non-Viable Air
+                  {room} — Non-Viable Air · {isos.join(' / ')}
                 </h3>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <TrendChart
                     title="0.5 µm Particles (p/m³)"
                     points={pts05.map(p => ({ ...p, status: p.status_0_5 }))}
                     yKey="particle_count_0_5"
-                    thresholds={PARTICLE_0_5[iso]}
+                    thresholds={isos.map(iso => ({ iso, ...PARTICLE_0_5[iso] }))}
                     unit="p/m³"
                     onDotClick={handleDotClick}
                   />
@@ -490,7 +525,7 @@ export default function EnvAnalyticsPage() {
                     title="5.0 µm Particles (p/m³)"
                     points={pts50.map(p => ({ ...p, status: p.status_5_0 }))}
                     yKey="particle_count_5_0"
-                    thresholds={PARTICLE_5_0[iso]}
+                    thresholds={isos.map(iso => ({ iso, ...PARTICLE_5_0[iso] }))}
                     unit="p/m³"
                     onDotClick={handleDotClick}
                   />
@@ -507,15 +542,15 @@ export default function EnvAnalyticsPage() {
       {/* ── SURFACE TAB ── */}
       {!loading && activeTab === 'surface' && (
         <div className="space-y-4">
-          {ISO_CLASSES.map(iso => {
-            const pts = surfaceData.filter(p => p.iso_class === iso);
+          {groupByRoom(surfaceData).map(([room, pts]) => {
+            const isos = isoClassesIn(pts);
             return (
               <TrendChart
-                key={iso}
-                title={`${iso} — Surface (CFU)`}
+                key={room}
+                title={`${room} — Surface (CFU) · ${isos.join(' / ')}`}
                 points={pts}
                 yKey="surface_cfu"
-                thresholds={SURFACE_THRESHOLDS[iso]}
+                thresholds={isos.map(iso => ({ iso, ...SURFACE_THRESHOLDS[iso] }))}
                 unit="CFU"
                 onDotClick={handleDotClick}
               />
